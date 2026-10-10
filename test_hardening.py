@@ -233,6 +233,27 @@ def test_camera_only_after_opt_in():
     print("Passed: camera renders only after the toggle.")
 
 
+def test_demo_polish():
+    print("Testing toolbar config and month chart labels...")
+    import json
+    import re
+    import tomllib
+
+    config = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+    assert config["client"]["toolbarMode"] == "viewer", "Deploy / developer menu must be hidden"
+
+    seed_demo_data()
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception, at.exception
+    figures = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    month_fig = [f for f in figures if "Expenses by Month" in json.dumps(f["layout"].get("title", ""))][0]
+    months = month_fig["data"][0]["x"]
+    assert months and all(re.fullmatch(r"[A-Z][a-z]{2} \d{4}", m) for m in months), months
+    assert month_fig["layout"]["xaxis"]["type"] == "category"
+    reset_db()
+    print("Passed: developer toolbar hidden, months labelled.")
+
+
 def test_nan_cells():
     print("Testing NaN cells from the review table...")
     row = {"txn_date": float("nan"), "party": float("nan"), "type": "expense", "amount": 100.0,
@@ -252,5 +273,6 @@ if __name__ == "__main__":
     test_api_keys_not_sent_to_browser()
     test_confirm_ticks_reset_after_use()
     test_camera_only_after_opt_in()
+    test_demo_polish()
     test_nan_cells()
     print("ALL HARDENING TESTS PASSED!")

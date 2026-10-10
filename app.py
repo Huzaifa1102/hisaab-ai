@@ -1145,6 +1145,9 @@ with tab_dashboard:
             exp_copy = exp_df.copy()
             exp_copy["month"] = exp_copy["txn_date"].str.slice(0, 7)
             monthly_exp = exp_copy.groupby("month", as_index=False)["amount"].sum().sort_values("month")
+            # "2026-08" strings were read by Plotly as dates and ticked by day; label months explicitly
+            monthly_exp["month"] = pd.to_datetime(monthly_exp["month"] + "-01", errors="coerce").dt.strftime("%b %Y")
+            monthly_exp = monthly_exp.dropna(subset=["month"])
             fig_mo = px.bar(
                 monthly_exp,
                 x="month",
@@ -1154,6 +1157,7 @@ with tab_dashboard:
                 color_discrete_sequence=["#047857"],
             )
             fig_mo.update_layout(plot_bgcolor="rgba(0,0,0,0)")
+            fig_mo.update_xaxes(type="category")
             st.plotly_chart(fig_mo)
         else:
             st.info("No monthly expense data available.")
