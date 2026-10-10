@@ -126,6 +126,26 @@ def add_scan_error(filename: str, message: str, cache_file: Optional[Path] = Non
     })
 
 
+def api_key_input(label: str, env_var: str, help_text: str) -> str:
+    """
+    Returns the API key to use. A key from .env is never put into a widget, because
+    password fields still send their value to the browser (and have a 'show' button).
+    The user can optionally type a different key, which overrides the .env one.
+    """
+    env_key = os.getenv(env_var, "").strip()
+    if env_key and not env_key.startswith("your_"):
+        st.caption(f"🔑 {label}: loaded from .env (hidden)")
+        override = st.text_input(
+            f"Use a different {label} (optional)",
+            value="",
+            type="password",
+            placeholder="Leave empty to use the .env key",
+            help=help_text,
+        )
+        return override.strip() or env_key
+    return st.text_input(label, value="", type="password", help=help_text).strip()
+
+
 def ui_error_message(err: Exception) -> str:
     """UI-safe text for an exception: AIServiceError messages are already friendly; others are hidden."""
     if isinstance(err, AIServiceError):
@@ -306,22 +326,16 @@ with st.sidebar:
     )
     model_name = clean_model_name(raw_model_input)
 
-    env_gemini_key = os.getenv("GEMINI_API_KEY", "")
-    api_key = st.text_input(
-        "Gemini API Key",
-        value=env_gemini_key,
-        type="password",
-        help="Paste your Google AI Studio API key.",
+    api_key = api_key_input(
+        "Gemini API Key", "GEMINI_API_KEY",
+        help_text="Paste your Google AI Studio API key.",
     )
     if not api_key:
         st.info("💡 Need a free key? Get one at [Google AI Studio](https://aistudio.google.com/).")
 
-    env_groq_key = os.getenv("GROQ_API_KEY", "")
-    groq_key = st.text_input(
-        "Groq API Key (Voice)",
-        value=env_groq_key,
-        type="password",
-        help="Optional: Free key from console.groq.com for Whisper speech-to-text.",
+    groq_key = api_key_input(
+        "Groq API Key (Voice)", "GROQ_API_KEY",
+        help_text="Optional: Free key from console.groq.com for Whisper speech-to-text.",
     )
 
     shop_name = st.text_input("Shop Name", value="Madina General Store")

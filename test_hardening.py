@@ -7,6 +7,7 @@ Gemini is mocked and the API keys are blanked.
 4. Friendly error messages (no raw API text) and retry rules (one retry, none for bad key/model).
 5. Ask / reminder fallbacks keep honest labels and explain why the AI was not used.
 6. Blank review-table cells (NaN) never become a party named "Nan".
+7. API keys from .env are never sent to the browser, but are still used for AI calls.
 """
 
 import os
@@ -169,6 +170,33 @@ def test_honest_fallback_labels():
     print("Passed: offline/template labels with a reason.")
 
 
+def test_api_keys_not_sent_to_browser():
+    print("Testing that .env API keys never reach the UI...")
+    fake_gemini = "AIzaFAKE_TEST_KEY_0123456789abcdefghij"
+    fake_groq = "gsk_FAKE_TEST_KEY_0123456789abcdefghij"
+    seed_demo_data()
+    with patch.dict(os.environ, {"GEMINI_API_KEY": fake_gemini, "GROQ_API_KEY": fake_groq}):
+        at = AppTest.from_file(APP, default_timeout=60).run()
+        assert not at.exception, at.exception
+        shown = [str(w.value) for w in at.text_input]
+        for kind in ("caption", "markdown", "info", "warning", "success", "error"):
+            shown += [str(e.value) for e in getattr(at, kind)]
+        assert not any(fake_gemini in v or fake_groq in v for v in shown), "API key sent to the browser"
+        assert sum("loaded from .env" in c.value for c in at.sidebar.caption) == 2
+
+        # The hidden .env key is still the one used for AI calls
+        client = MagicMock()
+        client.models.generate_content.return_value = MagicMock(text="Faisal Khan owes the most.")
+        with patch("google.genai.Client", return_value=client) as client_cls:
+            [t for t in at.text_input if t.label == "Question"][0].set_value("who owes me the most?")
+            [b for b in at.button if b.label == "🔍 Ask AI"][0].click().run()
+            assert not at.exception, at.exception
+            assert client_cls.call_args.kwargs["api_key"] == fake_gemini
+            assert any("AI answer" in s.value for s in at.success)
+    reset_db()
+    print("Passed: keys stay hidden and are still used.")
+
+
 def test_nan_cells():
     print("Testing NaN cells from the review table...")
     row = {"txn_date": float("nan"), "party": float("nan"), "type": "expense", "amount": 100.0,
@@ -185,5 +213,6 @@ if __name__ == "__main__":
     test_save_empty_table_keeps_doc()
     test_friendly_errors_and_retry()
     test_honest_fallback_labels()
+    test_api_keys_not_sent_to_browser()
     test_nan_cells()
     print("ALL HARDENING TESTS PASSED!")
