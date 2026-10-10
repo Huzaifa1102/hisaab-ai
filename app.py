@@ -7,9 +7,10 @@ Features:
 - Tab 2: 🎙️ Voice Khata (Groq Whisper-large-v3 Speech-to-Text & Gemini)
 - Tab 3: 📒 Ledger (Search, Filtering, Excel/CSV Export, Quick Add, Batch Delete)
 - Tab 4: 👥 Udhaar (Customer Khata Balances, WhatsApp AI Reminders, Ledger History)
-- Tab 5: 📊 Dashboard (Bill Due Alerts, Plotly Charts, Financial Q&A with Gemini 3.8 Flash)
+- Tab 5: 📊 Dashboard (Bill Due Alerts, Plotly Charts, Financial Q&A with the sidebar's Gemini model)
 """
 
+import html
 import os
 import sys
 import uuid
@@ -358,13 +359,13 @@ with st.sidebar:
 # TOP APP HEADER BANNER
 # ==============================================================================
 today_str = date.today().strftime("%d %B %Y")
-status_label = "⚡ Offline Demo Mode" if offline_mode else "🟢 Live AI Engine (Gemini 3.8 Flash)"
+status_label = "⚡ Offline Demo Mode" if offline_mode else f"🟢 Live AI Engine ({html.escape(model_name)})"
 
 st.markdown(
     f"""
     <div class="hisaab-banner">
         <div>
-            <div class="hisaab-title">📒 Hisaab AI — {shop_name}</div>
+            <div class="hisaab-title">📒 Hisaab AI — {html.escape(shop_name)}</div>
             <div class="hisaab-subtitle">Digital Khata & Automatic Bookkeeper • {today_str}</div>
         </div>
         <div class="hisaab-status-pill">
@@ -1182,7 +1183,7 @@ with tab_dashboard:
     st.divider()
 
     # 5. Natural Language Financial Q&A: Ask Your Hisaab
-    st.markdown("#### 💬 Ask Your Hisaab (Gemini 3.8 Flash)")
+    st.markdown(f"#### 💬 Ask Your Hisaab ({model_name})")
     st.caption("Ask financial questions in Urdu, Roman Urdu, or English about your shop expenses and ledger.")
 
     col_q1, col_q2 = st.columns([3, 1])
