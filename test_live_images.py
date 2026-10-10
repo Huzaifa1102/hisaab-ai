@@ -95,7 +95,7 @@ def run_benchmark():
                 print(f" [DONE] ({t_elapsed}s)")
 
                 # Save the first successful run directly to demo_cache
-                if run_num == 1:
+                if not any(r["success"] for r in runs_data):
                     try:
                         cache_dest.write_text(result.model_dump_json(indent=2), encoding="utf-8")
                         print(f"      [CACHE SAVED] Live scan stored -> demo_cache/{stem}.json")

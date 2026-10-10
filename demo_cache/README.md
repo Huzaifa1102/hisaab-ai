@@ -12,4 +12,14 @@ Offline Demo Mode guarantees a 100% resilient fallback that judges and shopkeepe
 3. **Transparent Banner**: When an offline result is loaded, Hisaab AI displays a clear warning banner:
    `"Offline demo mode: showing a saved result for this image."`
    This ensures complete transparency with no silent substitutions.
-4. **Fallback on Failure**: If a live API call fails due to internet interruption and a cached entry exists for the image, the UI offers an explicit "Use saved result for this image" button.
+4. **Fallback on Failure**: If a live API call fails due to internet interruption and a cached entry exists for the image, the UI offers an explicit "Use saved result for this image" button. Nothing is ever loaded from here without the toggle or that click.
+5. **Camera photos** are never cached or matched, because their file name does not identify the document.
+
+## Where these files must come from
+Only real API results belong here. Regenerate them with a valid key in `.env`:
+
+```
+python test_live_images.py
+```
+
+This scans every image in `test_images/` three times and saves the first successful real result of each.
