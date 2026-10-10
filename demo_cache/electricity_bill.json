@@ -1,0 +1,36 @@
+{
+  "doc_type": "utility_bill",
+  "summary": "IESCO commercial electricity bill, payable Rs 7,840 by due date.",
+  "document_date": "2026-10-08",
+  "confidence": 0.96,
+  "line_items": [
+    {
+      "description": "Commercial Electricity Units (240 kWh)",
+      "qty": 240.0,
+      "amount": 6200.0
+    },
+    {
+      "description": "Fuel Price Adjustment & Surcharges",
+      "qty": 1.0,
+      "amount": 1140.0
+    },
+    {
+      "description": "GST & TV Fee",
+      "qty": 1.0,
+      "amount": 500.0
+    }
+  ],
+  "entries": [
+    {
+      "txn_date": "2026-10-08",
+      "party": "IESCO",
+      "type": "expense",
+      "amount": 7840.0,
+      "category": "Electricity",
+      "status": "unpaid",
+      "due_date": "2026-10-12",
+      "note": "Payable within due date"
+    }
+  ],
+  "warnings": []
+}

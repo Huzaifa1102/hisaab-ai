@@ -1,0 +1,52 @@
+{
+  "doc_type": "khata_page",
+  "summary": "Handwritten udhaar register page with credit entries and partial repayments for multiple neighborhood customers.",
+  "document_date": "2026-10-09",
+  "confidence": 0.92,
+  "line_items": [],
+  "entries": [
+    {
+      "txn_date": "2026-10-09",
+      "party": "Ahmed Raza",
+      "type": "udhaar_given",
+      "amount": 2500.0,
+      "category": "Customer Credit",
+      "status": "n/a",
+      "due_date": null,
+      "note": "Aata 10kg aur ghee 2.5kg udhaar liye"
+    },
+    {
+      "txn_date": "2026-10-09",
+      "party": "Bushra Bibi",
+      "type": "payment_received",
+      "amount": 1500.0,
+      "category": "Customer Credit",
+      "status": "n/a",
+      "due_date": null,
+      "note": "Wapis jama karwaye cash"
+    },
+    {
+      "txn_date": "2026-10-09",
+      "party": "Faisal Khan",
+      "type": "udhaar_given",
+      "amount": 3400.0,
+      "category": "Customer Credit",
+      "status": "n/a",
+      "due_date": null,
+      "note": "Sugar 5kg aur chawal 10kg baqi"
+    },
+    {
+      "txn_date": "2026-10-09",
+      "party": "Counter Cash Sale",
+      "type": "cash_sale",
+      "amount": 4200.0,
+      "category": "Sales",
+      "status": "n/a",
+      "due_date": null,
+      "note": "Naqd bikri subah"
+    }
+  ],
+  "warnings": [
+    "Skipped running balance row on line 5 (not a transaction)"
+  ]
+}

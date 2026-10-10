@@ -1,0 +1,31 @@
+{
+  "doc_type": "receipt",
+  "summary": "Cash purchase receipt from Packaging Depot for shop packaging supplies.",
+  "document_date": "2026-10-06",
+  "confidence": 0.94,
+  "line_items": [
+    {
+      "description": "Polythene carry bags (large) 5kg",
+      "qty": 5.0,
+      "amount": 2500.0
+    },
+    {
+      "description": "Paper wrapping rolls",
+      "qty": 2.0,
+      "amount": 800.0
+    }
+  ],
+  "entries": [
+    {
+      "txn_date": "2026-10-06",
+      "party": "Packaging Depot",
+      "type": "expense",
+      "amount": 3300.0,
+      "category": "Maintenance",
+      "status": "paid",
+      "due_date": null,
+      "note": "Shop packaging bags and rolls"
+    }
+  ],
+  "warnings": []
+}

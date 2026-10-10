@@ -1,0 +1,36 @@
+{
+  "doc_type": "invoice",
+  "summary": "Wholesale supplier invoice from Al-Fatah Wholesale for store inventory restocking.",
+  "document_date": "2026-10-07",
+  "confidence": 0.98,
+  "line_items": [
+    {
+      "description": "Sugar (Cheeni) 50kg Bag",
+      "qty": 2.0,
+      "amount": 14500.0
+    },
+    {
+      "description": "Super Basmati Rice (Chawal) 25kg",
+      "qty": 3.0,
+      "amount": 18600.0
+    },
+    {
+      "description": "Dal Daal Chana 20kg",
+      "qty": 1.0,
+      "amount": 5400.0
+    }
+  ],
+  "entries": [
+    {
+      "txn_date": "2026-10-07",
+      "party": "Al-Fatah Wholesale",
+      "type": "expense",
+      "amount": 38500.0,
+      "category": "Stock / Inventory",
+      "status": "paid",
+      "due_date": null,
+      "note": "Grand total for inventory stock invoice #AF-8942"
+    }
+  ],
+  "warnings": []
+}
