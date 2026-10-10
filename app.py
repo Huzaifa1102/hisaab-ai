@@ -572,7 +572,11 @@ with tab_scan:
             key=f"doc_uploader_{st.session_state.uploader_key}",
         )
     with col_up2:
-        with st.expander("📸 Or Use Device Camera"):
+        # The camera widget asks the browser for permission as soon as it renders,
+        # so it only renders after the user turns it on.
+        camera_pic = None
+        if st.toggle("📸 Use device camera", key="use_camera",
+                     help="The browser asks for camera permission when you turn this on."):
             camera_pic = st.camera_input("Take a photo of bill / receipt")
             if camera_pic is not None:
                 if uploaded_files is None:

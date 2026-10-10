@@ -223,6 +223,16 @@ def test_confirm_ticks_reset_after_use():
     print("Passed: confirmations untick after use.")
 
 
+def test_camera_only_after_opt_in():
+    print("Testing that the camera (and its permission prompt) only appears on request...")
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.get("camera_input"), "camera must not render on page load"
+    [t for t in at.toggle if "Use device camera" in t.label][0].set_value(True).run()
+    assert not at.exception, at.exception
+    assert len(at.get("camera_input")) == 1
+    print("Passed: camera renders only after the toggle.")
+
+
 def test_nan_cells():
     print("Testing NaN cells from the review table...")
     row = {"txn_date": float("nan"), "party": float("nan"), "type": "expense", "amount": 100.0,
@@ -241,5 +251,6 @@ if __name__ == "__main__":
     test_honest_fallback_labels()
     test_api_keys_not_sent_to_browser()
     test_confirm_ticks_reset_after_use()
+    test_camera_only_after_opt_in()
     test_nan_cells()
     print("ALL HARDENING TESTS PASSED!")
