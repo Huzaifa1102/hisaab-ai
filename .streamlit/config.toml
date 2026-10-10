@@ -10,3 +10,7 @@ headless = true
 enableCORS = false
 enableXsrfProtection = false
 maxUploadSize = 50
+
+[client]
+# Never show raw tracebacks in the browser; full details still print in the terminal
+showErrorDetails = false
