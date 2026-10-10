@@ -8,6 +8,7 @@ and text generation helpers.
 
 import io
 import re
+import sys
 import time
 import urllib.parse
 from datetime import date, datetime
@@ -350,6 +351,125 @@ def clean_model_name(model_name: Optional[str]) -> str:
 resolve_model_name = clean_model_name
 
 
+GEMINI_TIMEOUT_MS = 45_000  # ~45 s per attempt; complex handwriting can be slow
+GROQ_TIMEOUT_S = 45.0
+
+
+class AIServiceError(ValueError):
+    """An AI call failed; the message is safe to show in the UI (no raw API text)."""
+
+
+class _EmptyAIResponse(Exception):
+    pass
+
+
+def _classify_error(err: Exception) -> str:
+    """Buckets an SDK/network exception into a coarse category."""
+    from pydantic import ValidationError
+
+    if isinstance(err, (_EmptyAIResponse, ValidationError)):
+        return "empty"
+    s = f"{type(err).__name__} {err}".lower()
+    if any(k in s for k in ("api_key_invalid", "api key not valid", "invalid_api_key", "permission_denied",
+                            "authentication", "401", "403")):
+        return "auth"
+    if any(k in s for k in ("resource_exhausted", "429", "rate limit", "ratelimit", "quota")):
+        return "rate_limit"
+    if any(k in s for k in ("timeout", "timed out", "deadline")):
+        return "timeout"
+    if any(k in s for k in ("getaddrinfo", "connecterror", "connectionerror", "apiconnectionerror",
+                            "connection", "network", "name resolution", "unreachable", "11001", "ssl")):
+        return "network"
+    if any(k in s for k in ("not_found", "404", "not found")):
+        return "not_found"
+    if any(k in s for k in ("500", "502", "503", "unavailable", "internal", "overloaded")):
+        return "server"
+    if any(k in s for k in ("400", "invalid_argument")):
+        return "bad_request"
+    return "other"
+
+
+def friendly_api_error(err: Exception, model_name: str = "", service: str = "Gemini") -> str:
+    """
+    Converts an AI/network exception into a short message for the shopkeeper.
+    The raw error is printed to the terminal for developers, never shown in the UI.
+    """
+    print(f"[hisaab-ai] {service} error ({type(err).__name__}): {err}", file=sys.stderr)
+    kind = _classify_error(err)
+    if kind == "auth":
+        return f"Invalid {service} API key. Please check the key in the sidebar or your .env file."
+    if kind == "rate_limit":
+        return f"{service} rate limit reached. Please wait a minute and try again, or use Offline demo mode."
+    if kind == "timeout":
+        return f"{service} did not answer within 45 seconds. Please check the internet connection and try again."
+    if kind == "network":
+        return (
+            f"Could not reach {service}. Please check the internet connection, "
+            "or turn on 'Offline demo mode' in the sidebar."
+        )
+    if kind == "not_found" and service == "Gemini":
+        return (
+            f"Model '{model_name}' was not found. Please change the 'Gemini Model' field in the sidebar "
+            "(e.g. gemini-3.8-flash)."
+        )
+    if kind == "server":
+        return f"{service} is temporarily unavailable. Please try again in a moment."
+    if kind == "empty":
+        return "The AI returned no readable result. Please try again, or use a clearer photo."
+    return f"{service} request failed ({type(err).__name__}). Please try again."
+
+
+def _gemini_generate(
+    api_key: str,
+    model_name: str,
+    contents: List[Any],
+    temperature: float,
+    schema: Optional[type] = None,
+) -> Any:
+    """
+    Calls Gemini with a ~45 s timeout and one retry for transient failures.
+    Returns the parsed `schema` object, or stripped text when no schema is given.
+    Raises AIServiceError with a UI-safe message.
+    """
+    from google import genai
+    from google.genai import types
+
+    config_kwargs: Dict[str, Any] = {"temperature": temperature}
+    if schema is not None:
+        config_kwargs.update(response_mime_type="application/json", response_schema=schema)
+
+    last_error: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(**config_kwargs),
+            )
+            if schema is None:
+                text = (getattr(resp, "text", None) or "").strip()
+                if not text:
+                    raise _EmptyAIResponse("empty text response")
+                return text
+
+            result = resp.parsed
+            if result is None and getattr(resp, "text", None):
+                result = schema.model_validate_json(resp.text)
+            if not result:
+                raise _EmptyAIResponse("empty structured response")
+            return result
+        except Exception as e:
+            last_error = e
+            # Bad key / unknown model / bad request will not fix themselves: fail fast.
+            if attempt == 0 and _classify_error(e) not in ("auth", "not_found", "bad_request"):
+                time.sleep(1.5)
+                continue
+            break
+
+    raise AIServiceError(friendly_api_error(last_error, model_name))
+
+
 def extract_from_image(
     raw_bytes: bytes,
     api_key: str,
@@ -358,79 +478,42 @@ def extract_from_image(
     """
     Processes an image, invokes Google Gemini via the official google-genai SDK
     with Pydantic structured output, normalizes entries, and drops unreadable amounts.
-    Retries once on failure before raising a friendly human-readable exception.
+    Retries once on transient failure before raising a friendly AIServiceError.
     """
     model_name = clean_model_name(model_name)
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
-        raise ValueError(
+        raise AIServiceError(
             "Gemini API key is missing or invalid. Please configure GEMINI_API_KEY in your .env "
             "or enter it in the sidebar (get a free key from https://aistudio.google.com/)."
         )
 
-    from google import genai
-    from google.genai import types
+    try:
+        pil_img = prepare_image(raw_bytes)
+    except Exception:
+        raise AIServiceError("This file could not be opened as an image. Please upload a JPG, PNG or WebP photo.")
 
-    pil_img = prepare_image(raw_bytes)
-    prompt_text = get_image_extraction_prompt()
+    result: ExtractionResult = _gemini_generate(
+        clean_key,
+        model_name,
+        contents=[pil_img, get_image_extraction_prompt()],
+        temperature=0.1,
+        schema=ExtractionResult,
+    )
 
-    # Configure client with 45-second timeout as required for complex handwriting
-    client = genai.Client(api_key=clean_key, http_options=types.HttpOptions(timeout=45_000))
+    # Normalization phase
+    normalized_entries: List[Dict[str, Any]] = []
+    for entry in result.entries:
+        norm = normalize_entry(entry, fallback_date=result.document_date)
+        if norm is not None:
+            normalized_entries.append(norm)
+        else:
+            party_label = entry.party or "unnamed party"
+            warning_msg = f"Entry for '{party_label}' skipped: amount unreadable"
+            if warning_msg not in result.warnings:
+                result.warnings.append(warning_msg)
 
-    last_error: Optional[Exception] = None
-    for attempt in range(2):
-        try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=[pil_img, prompt_text],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_schema=ExtractionResult,
-                ),
-            )
-
-            # Check parsed Pydantic object, fallback to json validation if needed
-            result: Optional[ExtractionResult] = resp.parsed
-            if result is None and getattr(resp, "text", None):
-                result = ExtractionResult.model_validate_json(resp.text)
-
-            if not result:
-                raise ValueError("Model returned an empty response. Please retry with a clearer photo.")
-
-            # Normalization phase
-            normalized_entries: List[Dict[str, Any]] = []
-            for entry in result.entries:
-                norm = normalize_entry(entry, fallback_date=result.document_date)
-                if norm is not None:
-                    normalized_entries.append(norm)
-                else:
-                    party_label = entry.party or "unnamed party"
-                    warning_msg = f"Entry for '{party_label}' skipped: amount unreadable"
-                    if warning_msg not in result.warnings:
-                        result.warnings.append(warning_msg)
-
-            return result, normalized_entries
-
-        except Exception as e:
-            last_error = e
-            if attempt == 0:
-                time.sleep(1.5)  # brief pause before retry
-
-    # Human-readable error translation
-    err_str = str(last_error)
-    if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "401" in err_str:
-        raise ValueError("Invalid Gemini API Key. Please verify your key on Google AI Studio.")
-    elif "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
-        raise ValueError("Gemini API rate limit exceeded. Please wait a few moments or switch to offline demo mode.")
-    elif "NOT_FOUND" in err_str or "404" in err_str or "not found" in err_str.lower():
-        raise ValueError(
-            f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_str}"
-        )
-    elif "timeout" in err_str.lower() or "deadline" in err_str.lower():
-        raise ValueError("Gemini request timed out after 45s. Please check your network connection or try a smaller image.")
-    else:
-        raise RuntimeError(f"AI Extraction failed: {err_str}")
+    return result, normalized_entries
 
 
 # ==============================================================================
@@ -445,11 +528,12 @@ def draft_reminder(
     language: str,
     api_key: str,
     model_name: str = "gemini-3.8-flash",
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[str]]:
     """
     Generates a polite, respectful WhatsApp payment reminder.
-    Returns (reminder_text, source_label).
+    Returns (reminder_text, source_label, notice).
     Source label is either 'AI answer' or 'Template message (AI unavailable)'.
+    notice explains why the template was used (None when the AI answered).
     """
     fallback = (
         f"Assalam o Alaikum {customer} sahab! {shop_name} ke khate mein aap ka "
@@ -458,7 +542,7 @@ def draft_reminder(
 
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
-        return fallback, "Template message (AI unavailable)"
+        return fallback, "Template message (AI unavailable)", "No Gemini API key entered in the sidebar."
 
     model_name = clean_model_name(model_name)
     prompt = (
@@ -470,23 +554,10 @@ def draft_reminder(
     )
 
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=clean_key, http_options=types.HttpOptions(timeout=15_000))
-        resp = client.models.generate_content(
-            model=model_name,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.4,
-            ),
-        )
-        if resp and resp.text:
-            return resp.text.strip(), "AI answer"
-    except Exception:
-        pass
-
-    return fallback, "Template message (AI unavailable)"
+        text = _gemini_generate(clean_key, model_name, contents=[prompt], temperature=0.4)
+        return text, "AI answer", None
+    except AIServiceError as e:
+        return fallback, "Template message (AI unavailable)", str(e)
 
 
 def local_hisaab_answer(question: str, ledger_df: pd.DataFrame) -> Optional[str]:
@@ -556,11 +627,12 @@ def ask_ledger(
     ledger_df: pd.DataFrame,
     api_key: str,
     model_name: str = "gemini-3.8-flash",
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[str]]:
     """
     Answers natural language queries about the shopkeeper's books using the recent ledger data.
-    Returns (answer_text, source_label).
-    Source label is either 'AI answer' or 'Calculated from your ledger (offline, not AI)'.
+    Returns (answer_text, source_label, notice).
+    Source label is 'AI answer', 'Calculated from your ledger (offline, not AI)', 'Notice' or 'Error'.
+    notice explains why the AI was not used for an offline answer (None otherwise).
     """
     model_name = clean_model_name(model_name)
     clean_key = (api_key or "").strip()
@@ -570,14 +642,15 @@ def ask_ledger(
 
     if not clean_key or clean_key.startswith("your_"):
         if local_ans:
-            return local_ans, "Calculated from your ledger (offline, not AI)"
+            return local_ans, "Calculated from your ledger (offline, not AI)", "No Gemini API key entered in the sidebar."
         return (
             "Please enter a valid Gemini API key in the sidebar to use 'Ask your hisaab'.",
             "Notice",
+            None,
         )
 
     if ledger_df.empty:
-        return "Your ledger is currently empty. Add transactions or load demo data first.", "Notice"
+        return "Your ledger is currently empty. Add transactions or load demo data first.", "Notice", None
 
     # Take recent 300 rows and convert to concise CSV
     recent_slice = ledger_df.head(300)[
@@ -600,33 +673,13 @@ Rules:
 """
 
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=clean_key, http_options=types.HttpOptions(timeout=20_000))
-        resp = client.models.generate_content(
-            model=model_name,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-            ),
-        )
-        if resp and resp.text:
-            return resp.text.strip(), "AI answer"
+        text = _gemini_generate(clean_key, model_name, contents=[prompt], temperature=0.2)
+        return text, "AI answer", None
+    except AIServiceError as e:
+        # Fall back to local analysis, and say why the AI was not used
         if local_ans:
-            return local_ans, "Calculated from your ledger (offline, not AI)"
-        return "No answer could be generated. Please rephrase your question.", "Notice"
-    except Exception as e:
-        # Fall back gracefully to local analysis rather than displaying raw API error
-        if local_ans:
-            return local_ans, "Calculated from your ledger (offline, not AI)"
-        err_msg = str(e)
-        if "NOT_FOUND" in err_msg or "404" in err_msg or "not found" in err_msg.lower():
-            return (
-                f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_msg}",
-                "Model Error",
-            )
-        return f"Could not answer hisaab query via AI: {err_msg}", "Error"
+            return local_ans, "Calculated from your ledger (offline, not AI)", str(e)
+        return str(e), "Error", None
 
 
 def whatsapp_link(phone: Optional[str], message: str) -> Optional[str]:
@@ -673,27 +726,28 @@ def transcribe_audio(
     """
     clean_key = (groq_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
-        raise ValueError(
+        raise AIServiceError(
             "Groq API key is missing. Please add GROQ_API_KEY to your .env or enter it in the sidebar. "
             "(Free keys available at https://console.groq.com/)."
         )
 
-    from groq import Groq
-
-    client = Groq(api_key=clean_key)
     try:
+        from groq import Groq
+
+        # One retry, same ~45 s budget as the Gemini calls
+        client = Groq(api_key=clean_key, timeout=GROQ_TIMEOUT_S, max_retries=1)
         tr = client.audio.transcriptions.create(
             file=(filename, audio_bytes),
             model="whisper-large-v3",
             prompt="Kiryana store khata: udhaar, wasool, jama, wapis, chawal, cheeni, atta, ghee, IESCO, SNGPL, rupay",
             temperature=0.0,
         )
-        return tr.text.strip()
+        text = (tr.text or "").strip()
     except Exception as e:
-        err_msg = str(e)
-        if "401" in err_msg or "invalid_api_key" in err_msg:
-            raise ValueError("Invalid Groq API Key. Please verify your key on console.groq.com.")
-        raise RuntimeError(f"Voice transcription failed: {err_msg}")
+        raise AIServiceError(friendly_api_error(e, service="Groq"))
+    if not text:
+        raise AIServiceError("No speech was recognised in the recording. Please record again, closer to the mic.")
+    return text
 
 
 def extract_from_text(
@@ -708,7 +762,7 @@ def extract_from_text(
     model_name = resolve_model_name(model_name)
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
-        raise ValueError(
+        raise AIServiceError(
             "Gemini API key is missing. Please enter it in the sidebar or configure .env."
         )
 
@@ -720,46 +774,23 @@ kharida / maal liya from supplier / bill diya → expense; naqd becha / cash sal
 Never guess amounts. doc_type = "voice". Transcript: "{transcript}"
 """
 
-    from google import genai
-    from google.genai import types
+    result: ExtractionResult = _gemini_generate(
+        clean_key,
+        model_name,
+        contents=[prompt],
+        temperature=0.1,
+        schema=ExtractionResult,
+    )
 
-    client = genai.Client(api_key=clean_key, http_options=types.HttpOptions(timeout=30_000))
-    try:
-        resp = client.models.generate_content(
-            model=model_name,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-                response_schema=ExtractionResult,
-            ),
-        )
+    normalized_entries: List[Dict[str, Any]] = []
+    for entry in result.entries:
+        norm = normalize_entry(entry, fallback_date=today)
+        if norm is not None:
+            normalized_entries.append(norm)
+        else:
+            party_label = entry.party or "unnamed party"
+            warning_msg = f"Voice entry for '{party_label}' skipped: amount unreadable"
+            if warning_msg not in result.warnings:
+                result.warnings.append(warning_msg)
 
-        result: Optional[ExtractionResult] = resp.parsed
-        if result is None and getattr(resp, "text", None):
-            result = ExtractionResult.model_validate_json(resp.text)
-
-        if not result:
-            raise ValueError("Model could not parse any transactions from the voice note.")
-
-        normalized_entries: List[Dict[str, Any]] = []
-        for entry in result.entries:
-            norm = normalize_entry(entry, fallback_date=today)
-            if norm is not None:
-                normalized_entries.append(norm)
-            else:
-                party_label = entry.party or "unnamed party"
-                warning_msg = f"Voice entry for '{party_label}' skipped: amount unreadable"
-                if warning_msg not in result.warnings:
-                    result.warnings.append(warning_msg)
-
-        return result, normalized_entries
-    except Exception as e:
-        err_msg = str(e)
-        if "API_KEY_INVALID" in err_msg or "401" in err_msg:
-            raise ValueError("Invalid Gemini API Key. Please verify your key on Google AI Studio.")
-        elif "NOT_FOUND" in err_msg or "404" in err_msg or "not found" in err_msg.lower():
-            raise ValueError(
-                f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_msg}"
-            )
-        raise RuntimeError(f"Voice extraction failed: {err_msg}")
+    return result, normalized_entries

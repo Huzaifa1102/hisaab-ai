@@ -11,6 +11,7 @@ Features:
 """
 
 import os
+import sys
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -38,6 +39,7 @@ from db import (
     set_customer_phone,
 )
 from core import (
+    AIServiceError,
     ExtractionResult,
     ask_ledger,
     clean_model_name,
@@ -82,6 +84,14 @@ if "voice_transcript" not in st.session_state:
 # Demo cache directory
 CACHE_DIR = Path(__file__).parent / "demo_cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+
+def ui_error_message(err: Exception) -> str:
+    """UI-safe text for an exception: AIServiceError messages are already friendly; others are hidden."""
+    if isinstance(err, AIServiceError):
+        return str(err)
+    print(f"[hisaab-ai] unexpected error ({type(err).__name__}): {err}", file=sys.stderr)
+    return f"Something went wrong ({type(err).__name__}). Please try again."
 
 # ==============================================================================
 # PROFESSIONAL FINTECH DESIGN SYSTEM (CSS)
@@ -599,7 +609,7 @@ if show_voice_tab and tab_voice is not None:
                                 st.session_state.voice_transcript = transcript
                                 st.success("Transcribed successfully!")
                             except Exception as e:
-                                st.error(f"Transcription failed: {e}")
+                                st.error(f"Transcription failed: {ui_error_message(e)}")
 
         # Editable transcript area
         if st.session_state.voice_transcript:
@@ -632,14 +642,7 @@ if show_voice_tab and tab_voice is not None:
                         st.toast("Voice transaction extracted! Review it below or in Smart Scan.", icon="✅")
                         st.rerun()
                     except Exception as e:
-                        err_str = str(e)
-                        if "not found" in err_str.lower():
-                            st.error(
-                                f"❌ Model selection error: {err_str}\n\n"
-                                "Please check the 'Gemini Model' field in the sidebar (e.g. `gemini-3.8-flash`)."
-                            )
-                        else:
-                            st.error(f"Voice extraction error: {e}")
+                        st.error(f"Voice extraction error: {ui_error_message(e)}")
 
 # ------------------------------------------------------------------------------
 # TAB 3: LEDGER
@@ -868,7 +871,7 @@ with tab_udhaar:
 
                 if st.button("✍️ Draft AI Reminder", type="primary"):
                     with st.spinner(f"Drafting respectful payment reminder with {model_name}..."):
-                        reminder_msg, draft_source = draft_reminder(
+                        reminder_msg, draft_source, draft_notice = draft_reminder(
                             shop_name=shop_name,
                             customer=selected_customer,
                             amount=cust_balance,
@@ -879,13 +882,16 @@ with tab_udhaar:
                         st.session_state.drafted_reminders[selected_customer] = {
                             "text": reminder_msg,
                             "source": draft_source,
+                            "notice": draft_notice,
                         }
 
             with col_u2:
                 saved_draft = st.session_state.drafted_reminders.get(selected_customer)
+                draft_notice = None
                 if isinstance(saved_draft, dict):
                     current_draft = saved_draft.get("text", "")
                     draft_source = saved_draft.get("source", "Template message (AI unavailable)")
+                    draft_notice = saved_draft.get("notice")
                 elif isinstance(saved_draft, str):
                     current_draft = saved_draft
                     draft_source = "Template message (AI unavailable)"
@@ -900,6 +906,8 @@ with tab_udhaar:
                     st.caption("✨ **AI answer**")
                 else:
                     st.caption("⚠️ **Template message (AI unavailable)**")
+                    if draft_notice:
+                        st.caption(f"Reason: {draft_notice}")
 
                 edited_msg = st.text_area(
                     "Editable Reminder Message:",
@@ -1141,7 +1149,7 @@ with tab_dashboard:
 
     if ask_clicked and user_query:
         with st.spinner(f"Analyzing your ledger records with {model_name}..."):
-            ans_text, ans_source = ask_ledger(
+            ans_text, ans_source, ans_notice = ask_ledger(
                 question=user_query,
                 ledger_df=df_all,
                 api_key=api_key,
@@ -1151,7 +1159,9 @@ with tab_dashboard:
                 st.success(f"🤖 **AI answer:**\n\n{ans_text}")
             elif ans_source == "Calculated from your ledger (offline, not AI)":
                 st.info(f"📊 **Calculated from your ledger (offline, not AI):**\n\n{ans_text}")
-            elif ans_source == "Model Error":
-                st.error(f"❌ **Model Error:**\n\n{ans_text}")
+                if ans_notice:
+                    st.caption(f"AI not used: {ans_notice}")
+            elif ans_source == "Error":
+                st.error(f"❌ {ans_text}")
             else:
                 st.warning(f"ℹ️ {ans_text}")
