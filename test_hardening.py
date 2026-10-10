@@ -210,8 +210,8 @@ def test_honest_fallback_labels():
 
 def test_api_keys_not_sent_to_browser():
     print("Testing that .env API keys never reach the UI...")
-    fake_gemini = "AIzaFAKE_TEST_KEY_0123456789abcdefghij"
-    fake_groq = "gsk_FAKE_TEST_KEY_0123456789abcdefghij"
+    fake_gemini = "not-a-real-gemini-key-for-tests-0001"  # deliberately not key-shaped
+    fake_groq = "not-a-real-groq-key-for-tests-0002"
     seed_demo_data()
     with patch.dict(os.environ, {"GEMINI_API_KEY": fake_gemini, "GROQ_API_KEY": fake_groq}):
         at = AppTest.from_file(APP, default_timeout=60).run()
