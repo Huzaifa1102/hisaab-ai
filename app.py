@@ -28,18 +28,29 @@ import streamlit as st
 from db import (
     ALLOWED_TYPES,
     FIXED_CATEGORIES,
+    add_or_update_stock,
     add_transactions,
+    create_or_get_shop,
+    deduct_stock,
     delete_transactions,
     find_duplicates,
+    get_all_shops,
     get_all_transactions,
     get_customer_balances,
     get_customer_phone,
+    get_galla_history,
+    get_inventory,
+    get_today_cash_summary,
     get_unpaid_bills,
     init_db,
     mark_paid,
     reset_db,
+    save_galla_reconciliation,
     seed_demo_data,
     set_customer_phone,
+    update_inventory_from_line_items,
+    update_shop_pin,
+    verify_shop_pin,
 )
 from core import (
     AIServiceError,
@@ -49,12 +60,93 @@ from core import (
     clean_model_name,
     draft_reminder,
     extract_from_image,
+    extract_from_pdf,
     extract_from_text,
+    extract_unseen_image_offline,
+    get_gemini_key_pool,
     normalize_entry,
+    offline_parse_document,
     resolve_model_name,
+    send_whatsapp_api,
     transcribe_audio,
     whatsapp_link,
 )
+
+# UI Localization Dictionary
+UI_TRANSLATIONS = {
+    "en": {
+        "app_title": "Hisaab AI",
+        "app_subtitle": "Digital khata for kiryana stores",
+        "tab_scan": "📷 Smart Scan",
+        "tab_voice": "🎙️ Voice Khata",
+        "tab_ledger": "📒 Ledger",
+        "tab_udhaar": "👥 Udhaar",
+        "tab_inventory": "📦 Inventory",
+        "tab_dashboard": "📊 Dashboard",
+        "scan_header": "📷 Smart Document Scanner",
+        "scan_desc": "Upload photos or PDF copies of receipts, wholesaler invoices, utility bills, or khata pages.",
+        "upload_label": "Upload Document (JPG, PNG, WebP, PDF)",
+        "extract_btn": "🚀 Extract with AI",
+        "save_to_ledger": "💾 Save to Ledger",
+        "discard": "🗑️ Discard",
+        "inventory_update_cb": "📦 Update inventory stock with extracted line items",
+        "spending_month": "Expenses this month (incl. unpaid bills)",
+        "outstanding_udhaar": "Outstanding udhaar",
+        "unpaid_bills": "Unpaid bills",
+        "cash_sales_month": "Recorded cash sales this month",
+        "galla_title": "💵 Galla Hisaab (Cash Drawer Reconciliation)",
+        "galla_opening": "Opening Cash (Rs)",
+        "galla_counted": "Counted Physical Cash in Drawer (Rs)",
+        "galla_save": "💾 Save Today's Galla Reconciliation",
+        "galla_balanced": "✅ Galla Balanced! Physical cash matches recorded transactions perfectly.",
+        "galla_surplus": "📈 Cash Surplus: Physical cash is more than recorded transactions.",
+        "galla_shortage": "⚠️ Cash Shortage: Physical cash is less than recorded transactions.",
+        "low_stock_warning": "⚠️ Low Stock Alert: The following items are below minimum safety levels!",
+        "add_stock_header": "➕ Add or Restock Item",
+        "shop_security": "🛡️ Shopkeeper Security PIN",
+        "pin_prompt": "Enter 4-digit PIN to perform sensitive action:",
+        "pin_locked": "🔒 Security Locked",
+        "pin_unlocked": "🔓 Security Unlocked",
+        "whatsapp_api_btn": "⚡ Send WhatsApp (Direct API)",
+        "whatsapp_web_btn": "📲 Open in WhatsApp Web",
+    },
+    "ur": {
+        "app_title": "حساب اے آئی",
+        "app_subtitle": "کریانہ اور ریٹیل اسٹورز کے لیے ڈیجیٹل کھاتہ",
+        "tab_scan": "📷 اسمارٹ اسکین",
+        "tab_voice": "🎙️ آواز کھاتہ",
+        "tab_ledger": "📒 ڈیجیٹل لیجر",
+        "tab_udhaar": "👥 ادھار کھاتہ",
+        "tab_inventory": "📦 گودام و اسٹاک",
+        "tab_dashboard": "📊 ڈیش بورڈ",
+        "scan_header": "📷 اسمارٹ دستاویز اسکینر",
+        "scan_desc": "بلز، رسیدیں، ہول سیل انوائسز یا کھاتہ رجسٹر کے صفحات کی تصاویر یا پی ڈی ایف اپلوڈ کریں۔",
+        "upload_label": "دستاویز اپلوڈ کریں (تصویر یا پی ڈی ایف)",
+        "extract_btn": "🚀 اے آئی سے اسکین کریں",
+        "save_to_ledger": "💾 کھاتے میں محفوظ کریں",
+        "discard": "🗑️ منسوخ کریں",
+        "inventory_update_cb": "📦 مال کی اشیاء گودام و اسٹاک میں شامل کریں",
+        "spending_month": "ماہانہ کل اخراجات",
+        "outstanding_udhaar": "واجب الادا ادھار",
+        "unpaid_bills": "غیر ادا شدہ بلز",
+        "cash_sales_month": "کاؤنٹر نقد فروخت",
+        "galla_title": "💵 گلہ حساب (کیش ڈراور بیلنسنگ)",
+        "galla_opening": "شروع کیش / صبح کا گلہ (روپے)",
+        "galla_counted": "گن کر درج شدہ کیش (روپے)",
+        "galla_save": "💾 یومیہ گلہ ریکارڈ محفوظ کریں",
+        "galla_balanced": "✅ گلہ بالکل درست ہے! کاؤنٹر کیش اور کھاتہ برابر ہے۔",
+        "galla_surplus": "📈 کیش اضافی ہے: گلے میں رقم کھاتے سے زیادہ ہے۔",
+        "galla_shortage": "⚠️ کیش کم ہے: گلے میں رقم کھاتے سے کم ہے۔",
+        "low_stock_warning": "⚠️ اسٹاک میں کمی کا الرٹ: درج ذیل اشیاء کم سے کم حد سے کم ہیں!",
+        "add_stock_header": "➕ اسٹاک شامل / تبدیل کریں",
+        "shop_security": "🛡️ دکاندار سیکورٹی پن کوڈ",
+        "pin_prompt": "کارروائی کے لیے 4 ہندسوں کا پن کوڈ درج کریں:",
+        "pin_locked": "🔒 سیکورٹی مقفل",
+        "pin_unlocked": "🔓 سیکورٹی فعال",
+        "whatsapp_api_btn": "⚡ فوری اے پی آئی ارسال",
+        "whatsapp_web_btn": "📲 واٹس ایپ پر بھیجیں",
+    },
+}
 
 # Load environment configuration
 dotenv.load_dotenv()
@@ -328,11 +420,71 @@ st.markdown(
 # SIDEBAR: Configuration & Offline Mode
 # ==============================================================================
 with st.sidebar:
-    st.markdown("### 📒 **Hisaab AI**")
+    st.markdown("### 📒 **Hisaab AI (حساب)**")
     st.caption("AI-Powered Bookkeeper for Pakistani Kiryana Stores.")
+    
+    # 1. 100% Urdu Localization Toggle
+    lang_choice = st.radio(
+        "🌐 Language / زبان",
+        ["🇬🇧 English", "🇵🇰 اردو"],
+        horizontal=True,
+        index=1 if st.session_state.get("app_lang") == "ur" else 0,
+    )
+    st.session_state.app_lang = "ur" if "اردو" in lang_choice else "en"
+    is_urdu = st.session_state.app_lang == "ur"
+
+    def t(key: str, default: str = "") -> str:
+        lang = st.session_state.get("app_lang", "en")
+        return UI_TRANSLATIONS.get(lang, {}).get(key, default or key)
+
     st.divider()
 
-    st.subheader("⚙️ Settings")
+    # 2. Multi-Shop Profile Switcher
+    st.subheader(f"🏪 {t('shop_profile', 'Shop Profile')}")
+    all_shops = get_all_shops()
+    shop_dict = {s["shop_name"]: s["shop_id"] for s in all_shops}
+    shop_names = list(shop_dict.keys()) + ["➕ Add New Shop Profile"]
+    curr_shop_name = next((k for k, v in shop_dict.items() if v == st.session_state.get("current_shop_id")), "Madina General Store")
+    curr_idx = shop_names.index(curr_shop_name) if curr_shop_name in shop_names else 0
+
+    selected_shop_name = st.selectbox("Active Shop", shop_names, index=curr_idx)
+    if selected_shop_name == "➕ Add New Shop Profile":
+        new_s_name = st.text_input("New Shop Name", placeholder="e.g. Bismillah Kiryana")
+        new_s_pin = st.text_input("Security PIN (4 digits)", value="1234", max_chars=4, type="password")
+        if st.button("Create & Switch Shop"):
+            if new_s_name:
+                new_profile = create_or_get_shop(new_s_name.lower().replace(" ", "_"), new_s_name, new_s_pin)
+                st.session_state.current_shop_id = new_profile["shop_id"]
+                st.toast(f"Switched to {new_s_name}!", icon="🏪")
+                st.rerun()
+        current_shop_id = st.session_state.get("current_shop_id", "madina_store")
+        shop_name = curr_shop_name
+    else:
+        st.session_state.current_shop_id = shop_dict[selected_shop_name]
+        current_shop_id = st.session_state.current_shop_id
+        shop_name = selected_shop_name
+
+    # 3. Shopkeeper Security PIN Lock
+    pin_lock_active = st.toggle("🔒 Shopkeeper PIN Protection", value=False)
+    if pin_lock_active:
+        if not st.session_state.get("pin_unlocked"):
+            pin_try = st.text_input("Enter 4-digit PIN for Admin Actions:", type="password", max_chars=4)
+            if st.button("Unlock Security"):
+                if verify_shop_pin(current_shop_id, pin_try):
+                    st.session_state.pin_unlocked = True
+                    st.toast("Admin Security Unlocked!", icon="🔓")
+                    st.rerun()
+                else:
+                    st.error("Incorrect PIN! (Default is 1234)")
+        else:
+            st.success("🔓 Admin Mode Unlocked")
+            if st.button("Lock Security"):
+                st.session_state.pin_unlocked = False
+                st.rerun()
+
+    st.divider()
+
+    st.subheader("⚙️ Settings & API Keys")
     default_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     raw_model_input = st.text_input(
         "Gemini Model",
@@ -342,18 +494,23 @@ with st.sidebar:
     model_name = clean_model_name(raw_model_input)
 
     api_key = api_key_input(
-        "Gemini API Key", "GEMINI_API_KEY",
+        "Primary Gemini API Key", "GEMINI_API_KEY",
         help_text="Paste your Google AI Studio API key.",
     )
-    if not api_key:
-        st.info("💡 Need a free key? Get one at [Google AI Studio](https://aistudio.google.com/).")
+
+    # 4. Backup Gemini Key for Automatic Quota Failover
+    backup_gemini_key = api_key_input(
+        "Backup Gemini API Key (Failover)", "GEMINI_API_KEY_BACKUP_1",
+        help_text="Automatic failover key if primary key quota is exhausted.",
+    )
+    key_pool = get_gemini_key_pool(api_key)
+    if len(key_pool) > 1:
+        st.caption(f"🛡️ **Multi-Key Failover Active:** {len(key_pool)} keys ready.")
 
     groq_key = api_key_input(
         "Groq API Key (Voice)", "GROQ_API_KEY",
         help_text="Optional: Free key from console.groq.com for Whisper speech-to-text.",
     )
-
-    shop_name = st.text_input("Shop Name", value="Madina General Store")
 
     show_voice_tab = st.checkbox(
         "Show Voice Khata tab",
@@ -364,8 +521,6 @@ with st.sidebar:
     st.divider()
     st.subheader("🧪 Demo Utilities")
 
-    # Load Demo Ledger button (replaces the whole ledger, so ask first).
-    # The callbacks untick the confirmation so a second click cannot wipe the ledger again.
     def _load_demo_ledger():
         st.session_state.sidebar_toast = (f"Demo ledger loaded with {seed_demo_data()} transactions.", "✅")
         st.session_state.confirm_demo = False
@@ -377,7 +532,7 @@ with st.sidebar:
 
     st.checkbox("Replace current ledger with demo data", key="confirm_demo")
     st.button(
-        "📥 Load Demo Ledger",
+        t("load_demo", "📥 Load Demo Ledger"),
         type="secondary",
         disabled=not st.session_state.confirm_demo,
         on_click=_load_demo_ledger,
@@ -386,15 +541,18 @@ with st.sidebar:
     # Offline demo mode toggle
     offline_mode = st.toggle("Offline demo mode (use saved results)", value=False)
     if offline_mode:
-        st.caption("📂 Offline mode active: extractions will load pre-cached results from `demo_cache/`.")
+        st.caption("📂 Offline mode active: extractions will run on-device and load pre-cached results.")
 
-    # Reset ledger expander
+    # Reset ledger expander (with PIN protection if active)
     with st.expander("⚠️ Reset Database"):
-        st.checkbox("I understand this deletes everything", key="confirm_reset")
+        reset_allowed = not pin_lock_active or st.session_state.get("pin_unlocked")
+        if not reset_allowed:
+            st.warning("Admin PIN required to reset database.")
+        st.checkbox("I understand this deletes everything", key="confirm_reset", disabled=not reset_allowed)
         st.button(
             "Reset Ledger",
             type="primary",
-            disabled=not st.session_state.confirm_reset,
+            disabled=(not st.session_state.confirm_reset) or (not reset_allowed),
             on_click=_reset_ledger,
         )
 
@@ -403,20 +561,33 @@ with st.sidebar:
         st.toast(toast_msg, icon=toast_icon)
 
 # ==============================================================================
-# TOP APP HEADER BANNER
+# TOP APP HEADER BANNER (with Urdu RTL Support)
 # ==============================================================================
 today_str = date.today().strftime("%d %B %Y")
-status_label = "⚡ Offline Demo Mode" if offline_mode else f"🟢 Live AI Engine ({html.escape(model_name)})"
+status_label = "⚡ " + t("offline_mode_label") if offline_mode else f"🟢 Live AI Engine ({html.escape(model_name)})"
+
+rtl_css = ""
+if is_urdu:
+    rtl_css = """
+    <style>
+    .khata-brand { flex-direction: row-reverse !important; }
+    .khata-brandname, .hisaab-title, .hisaab-subtitle { text-align: right !important; }
+    .stApp, .stApp p, .stApp label, .stApp h1, .stApp h2, .stApp h3 {
+        font-family: 'Noto Nastaliq Urdu', 'Mukta', sans-serif !important;
+    }
+    </style>
+    """
 
 st.markdown(
     f"""
+    {rtl_css}
     <div class="khata-cover" role="banner">
         <div class="khata-brand">
             <span class="khata-urdu" lang="ur" dir="rtl">حساب</span>
             <div>
-                <div class="khata-brandname">Hisaab AI</div>
+                <div class="khata-brandname">{t('app_title')}</div>
                 <div class="hisaab-title">{html.escape(shop_name)}</div>
-                <div class="hisaab-subtitle">Digital khata for {today_str}</div>
+                <div class="hisaab-subtitle">{t('app_subtitle')} — {today_str}</div>
             </div>
         </div>
         <div class="hisaab-status-pill">{status_label}</div>
@@ -508,11 +679,17 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
             },
         )
 
-        # Line items expander
+        # Line items expander & inventory update checkbox
+        update_inv = False
         if raw_result.line_items:
             with st.expander(f"📦 View Line Items ({len(raw_result.line_items)} detected)"):
                 li_df = pd.DataFrame([li.model_dump() for li in raw_result.line_items])
                 st.dataframe(li_df)
+                update_inv = st.checkbox(
+                    t("inventory_update_cb", "📦 Update Inventory Stock with extracted line items"),
+                    value=(doc_type == "invoice"),
+                    key=f"inv_chk_{uid}",
+                )
 
         col_btn1, col_btn2 = st.columns([1, 1])
         with col_btn1:
@@ -526,18 +703,25 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
                 skipped = len(edited_rows) - len(valid_rows)
 
                 if not valid_rows:
-                    # Keep the document in the queue so the user can fix amounts or discard it
                     st.warning(
                         "Nothing saved: no row has a valid amount above 0. "
                         "Fix the amounts in the table, or click 'Discard'."
                     )
                 else:
                     try:
+                        active_shop = st.session_state.get("current_shop_id", "madina_store")
                         added_count = add_transactions(
                             valid_rows,
                             source=filename,
                             doc_type=doc_type,
                         )
+                        if update_inv and raw_result.line_items:
+                            inv_cnt = update_inventory_from_line_items(
+                                [li.model_dump() for li in raw_result.line_items],
+                                shop_id=active_shop,
+                            )
+                            if inv_cnt:
+                                st.toast(f"Updated {inv_cnt} inventory items in stock!", icon="📦")
                     except Exception as save_err:
                         st.error(f"Could not save to the ledger: {ui_error_message(save_err)}")
                     else:
@@ -559,10 +743,15 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
 # ==============================================================================
 # MAIN TABS INTERFACE
 # ==============================================================================
-tab_titles = ["📷 Smart Scan"]
+tab_titles = [t("tab_scan", "📷 Smart Scan")]
 if show_voice_tab:
-    tab_titles.append("🎙️ Voice Khata")
-tab_titles.extend(["📒 Ledger", "👥 Udhaar", "📊 Dashboard"])
+    tab_titles.append(t("tab_voice", "🎙️ Voice Khata"))
+tab_titles.extend([
+    t("tab_ledger", "📒 Ledger"),
+    t("tab_udhaar", "👥 Udhaar"),
+    t("tab_inventory", "📦 Inventory"),
+    t("tab_dashboard", "📊 Dashboard"),
+])
 tabs = st.tabs(tab_titles)
 
 tab_scan = tabs[0]
@@ -570,31 +759,31 @@ if show_voice_tab:
     tab_voice = tabs[1]
     tab_ledger = tabs[2]
     tab_udhaar = tabs[3]
-    tab_dashboard = tabs[4]
+    tab_inventory = tabs[4]
+    tab_dashboard = tabs[5]
 else:
     tab_voice = None
     tab_ledger = tabs[1]
     tab_udhaar = tabs[2]
-    tab_dashboard = tabs[3]
+    tab_inventory = tabs[3]
+    tab_dashboard = tabs[4]
 
 # ------------------------------------------------------------------------------
 # TAB 1: SMART SCAN
 # ------------------------------------------------------------------------------
 with tab_scan:
-    st.subheader("📷 Smart Document Scanner")
-    st.caption("Upload photos of receipts, wholesaler invoices, utility bills (IESCO/SNGPL/PTCL), or handwritten khata pages.")
+    st.subheader(t("scan_header", "📷 Smart Document Scanner"))
+    st.caption(t("scan_desc", "Upload photos or PDF copies of receipts, wholesaler invoices, utility bills, or khata pages."))
 
     col_up1, col_up2 = st.columns([2, 1])
     with col_up1:
         uploaded_files = st.file_uploader(
-            "Upload Document Photos (JPG, PNG, WebP)",
-            type=["jpg", "jpeg", "png", "webp"],
+            t("upload_label", "Upload Document (JPG, PNG, WebP, PDF)"),
+            type=["jpg", "jpeg", "png", "webp", "pdf"],
             accept_multiple_files=True,
             key=f"doc_uploader_{st.session_state.uploader_key}",
         )
     with col_up2:
-        # The camera widget asks the browser for permission as soon as it renders,
-        # so it only renders after the user turns it on.
         camera_pic = None
         if st.toggle("📸 Use device camera", key="use_camera",
                      help="The browser asks for camera permission when you turn this on."):
@@ -605,18 +794,48 @@ with tab_scan:
                 uploaded_files.append(camera_pic)
 
     has_files = bool(uploaded_files)
-    if st.button("🚀 Extract with AI", disabled=not has_files, type="primary"):
-        # Messages are kept in session_state so they survive the st.rerun() below
+    if st.button(t("extract_btn", "🚀 Extract with AI"), disabled=not has_files, type="primary"):
         st.session_state.scan_errors = []
         for f in uploaded_files:
             file_bytes = f.getvalue()
             is_camera = f is camera_pic
-            # A camera photo's file name does not identify the document, so it never uses or writes the demo cache
             filename = f"Camera photo ({datetime.now().strftime('%H:%M:%S')})" if is_camera else f.name
             base_name = Path(f.name).stem
-            cache_file = None if is_camera else CACHE_DIR / f"{base_name}.json"
+            is_pdf_file = f.name.lower().endswith(".pdf")
+            cache_file = None if (is_camera or is_pdf_file) else CACHE_DIR / f"{base_name}.json"
 
-            if offline_mode:
+            if is_pdf_file:
+                if offline_mode:
+                    res, normalized_list = extract_from_pdf(
+                        file_bytes,
+                        filename,
+                        api_key=api_key,
+                        model_name=model_name,
+                        offline_only=True,
+                    )
+                    doc_item = new_pending_doc(res, normalized_list, None, filename, is_offline=True)
+                    doc_item["is_pdf"] = True
+                    st.session_state.pending_docs.append(doc_item)
+                else:
+                    with st.spinner(f"Extracting digital PDF '{filename}'..."):
+                        try:
+                            res, normalized_list = extract_from_pdf(
+                                file_bytes,
+                                filename,
+                                api_key=api_key,
+                                model_name=model_name,
+                                offline_only=False,
+                            )
+                            doc_item = new_pending_doc(res, normalized_list, None, filename, is_offline=False)
+                            doc_item["is_pdf"] = True
+                            st.session_state.pending_docs.append(doc_item)
+                        except Exception as pdf_err:
+                            add_scan_error(
+                                filename,
+                                f"Extraction failed: {ui_error_message(pdf_err)}",
+                                img_bytes=file_bytes,
+                            )
+            elif offline_mode:
                 if cache_file is None:
                     add_scan_error(filename, "Offline demo mode has no saved results for camera photos. "
                                              "Upload a saved test image, or turn off offline mode.")
@@ -631,6 +850,7 @@ with tab_scan:
                         filename,
                         f"Offline demo mode: no saved result for '{filename}' (expected `demo_cache/{base_name}.json`). "
                         "Turn off offline mode to scan it live.",
+                        img_bytes=file_bytes,
                     )
             else:
                 with st.spinner(f"Reading and analyzing '{filename}' with {model_name}..."):
@@ -676,6 +896,15 @@ with tab_scan:
                         scan_err["cache_file"] = None
                     else:
                         st.session_state.scan_errors.remove(scan_err)
+                    st.rerun()
+        elif scan_err.get("img_bytes"):
+            with col_e1:
+                if st.button(f"Process with On-Device Engine for {scan_err['filename']}", key=f"use_ondevice_{scan_err['id']}"):
+                    res, norm_list = extract_unseen_image_offline(scan_err["img_bytes"], scan_err["filename"])
+                    doc_item = new_pending_doc(res, norm_list, scan_err["img_bytes"], scan_err["filename"], is_offline=True)
+                    doc_item["cache_provenance"] = "on_device_heuristic"
+                    st.session_state.pending_docs.append(doc_item)
+                    st.session_state.scan_errors.remove(scan_err)
                     st.rerun()
         with col_e2:
             if st.button("Dismiss", key=f"dismiss_err_{scan_err['id']}"):
@@ -1025,14 +1254,27 @@ with tab_udhaar:
                 )
 
                 wa_url = whatsapp_link(new_phone, edited_msg)
-                if wa_url:
-                    st.link_button(
-                        "📲 Open in WhatsApp",
-                        url=wa_url,
-                        type="primary",
-                    )
-                else:
-                    st.info("ℹ️ Enter and save a valid Pakistani phone number (e.g. 03001234567) to open WhatsApp directly.")
+                wa_btn1, wa_btn2 = st.columns([1, 1])
+                with wa_btn1:
+                    if wa_url:
+                        st.link_button(
+                            t("whatsapp_web_btn", "📲 Open in WhatsApp"),
+                            url=wa_url,
+                            type="primary",
+                        )
+                    else:
+                        st.info("ℹ️ Enter and save a valid phone number (e.g. 03001234567).")
+                with wa_btn2:
+                    if st.button(t("whatsapp_api_btn", "⚡ Send via WhatsApp API"), key=f"wa_api_{selected_customer}"):
+                        if not new_phone:
+                            st.warning("Please save customer phone number first.")
+                        else:
+                            with st.spinner("Dispatching WhatsApp message in background..."):
+                                ok, res_msg = send_whatsapp_api(new_phone, edited_msg)
+                                if ok:
+                                    st.success(res_msg)
+                                else:
+                                    st.info(f"ℹ️ {res_msg}")
 
             # Individual Customer Transaction History Drilldown
             with st.expander(f"📜 View Full Khata History for {selected_customer}"):
@@ -1050,10 +1292,134 @@ with tab_udhaar:
                         )
 
 # ------------------------------------------------------------------------------
-# TAB 5: DASHBOARD
+# TAB 5: INVENTORY (گودام و اسٹاک)
+# ------------------------------------------------------------------------------
+with tab_inventory:
+    st.subheader(t("tab_inventory", "📦 Inventory (گودام و اسٹاک)"))
+    st.caption("Track kiryana stock quantities, cost rates, retail valuations, and reorder warnings.")
+
+    active_shop = st.session_state.get("current_shop_id", "madina_store")
+    inv_df = get_inventory(shop_id=active_shop)
+
+    if inv_df.empty:
+        st.info("No inventory items found. Add items below or click 'Load Demo Ledger'.")
+    else:
+        total_items = len(inv_df)
+        total_cost_val = float(inv_df["total_cost_value"].sum())
+        total_retail_val = float(inv_df["total_sale_value"].sum())
+        low_stock_items = inv_df[inv_df["quantity"] <= inv_df["min_stock"]]
+
+        ic1, ic2, ic3, ic4 = st.columns(4)
+        with ic1:
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    <div class="kpi-label">{t('items', 'Total Commodities')}</div>
+                    <div class="kpi-value" style="color: #0F172A;">{total_items} items</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with ic2:
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    <div class="kpi-label">{t('total_stock_value', 'Stock Cost Valuation')}</div>
+                    <div class="kpi-value" style="color: #1E3A8A;">Rs {total_cost_val:,.0f}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with ic3:
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    <div class="kpi-label">{t('potential_retail_value', 'Potential Retail Value')}</div>
+                    <div class="kpi-value" style="color: #047857;">Rs {total_retail_val:,.0f}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with ic4:
+            low_color = "#DC2626" if len(low_stock_items) > 0 else "#047857"
+            st.markdown(
+                f"""
+                <div class="kpi-container">
+                    <div class="kpi-label">{t('low_stock_alert', 'Low Stock Items')}</div>
+                    <div class="kpi-value" style="color: {low_color};">{len(low_stock_items)} items</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if not low_stock_items.empty:
+            for _, ls in low_stock_items.iterrows():
+                st.error(
+                    f"⚠️ **Low Stock Alert:** {ls['item_name']} — Only **{ls['quantity']:.1f} {ls['unit']}** remaining "
+                    f"(Minimum safety level: {ls['min_stock']:.1f} {ls['unit']})!"
+                )
+
+        st.divider()
+        st.markdown("#### 📦 Current Stock Register")
+        disp_inv = inv_df.copy()
+        disp_inv["cost_price"] = disp_inv["cost_price"].apply(lambda x: f"Rs {x:,.0f}")
+        disp_inv["sale_price"] = disp_inv["sale_price"].apply(lambda x: f"Rs {x:,.0f}")
+        disp_inv["total_cost_value"] = disp_inv["total_cost_value"].apply(lambda x: f"Rs {x:,.0f}")
+        disp_inv["total_sale_value"] = disp_inv["total_sale_value"].apply(lambda x: f"Rs {x:,.0f}")
+
+        st.dataframe(
+            disp_inv[["item_name", "category", "quantity", "unit", "cost_price", "sale_price", "total_cost_value", "total_sale_value", "min_stock"]],
+            hide_index=True,
+            column_config={
+                "item_name": st.column_config.TextColumn("Item Name / جنس"),
+                "category": st.column_config.TextColumn("Category"),
+                "quantity": st.column_config.NumberColumn("Current Stock", format="%.1f"),
+                "unit": st.column_config.TextColumn("Unit"),
+                "cost_price": st.column_config.TextColumn("Cost Price (PKR)"),
+                "sale_price": st.column_config.TextColumn("Sale Price (PKR)"),
+                "total_cost_value": st.column_config.TextColumn("Total Cost Value"),
+                "total_sale_value": st.column_config.TextColumn("Retail Value"),
+                "min_stock": st.column_config.NumberColumn("Reorder Level"),
+            },
+        )
+
+    with st.expander(t("add_stock_header", "➕ Add or Restock Item")):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            item_name_inp = st.text_input("Item Name (e.g. Atta 20kg)")
+            item_cat_inp = st.selectbox("Category", FIXED_CATEGORIES, index=0)
+        with c2:
+            item_qty_inp = st.number_input("Quantity", min_value=0.0, value=10.0, step=1.0)
+            item_unit_inp = st.selectbox(
+                "Unit",
+                ["kg", "bag (20kg)", "bag (50kg)", "tin (5L)", "carton", "pack", "litre", "piece"],
+                index=0,
+            )
+        with c3:
+            item_cost_inp = st.number_input("Cost Price (PKR)", min_value=0.0, value=500.0, step=50.0)
+            item_sale_inp = st.number_input("Sale Price (PKR)", min_value=0.0, value=550.0, step=50.0)
+        item_min_inp = st.number_input("Minimum Reorder Level", min_value=1.0, value=5.0)
+
+        if st.button("Save Item to Stock"):
+                if item_name_inp:
+                    add_or_update_stock(
+                        item_name=item_name_inp,
+                        quantity=item_qty_inp,
+                        unit=item_unit_inp,
+                        cost_price=item_cost_inp,
+                        sale_price=item_sale_inp,
+                        min_stock=item_min_inp,
+                        category=item_cat_inp,
+                        shop_id=active_shop,
+                    )
+                    st.toast("Stock updated successfully!", icon="✅")
+                    st.rerun()
+
+# ------------------------------------------------------------------------------
+# TAB 6: DASHBOARD (FINANCIAL ANALYTICS & GALLA HISAAB)
 # ------------------------------------------------------------------------------
 with tab_dashboard:
-    st.subheader("📊 Financial Dashboard & Analytics")
+    st.subheader(t("tab_dashboard", "📊 Financial Dashboard & Analytics"))
 
     today = date.today()
     df_all = get_all_transactions()
@@ -1100,7 +1466,7 @@ with tab_dashboard:
         st.markdown(
             f"""
             <div class="kpi-container">
-                <div class="kpi-label">Expenses this month (incl. unpaid bills)</div>
+                <div class="kpi-label">{t('spending_month')}</div>
                 <div class="kpi-value" style="color: #991B1B;">Rs {month_expenses:,.0f}</div>
             </div>
             """,
@@ -1110,7 +1476,7 @@ with tab_dashboard:
         st.markdown(
             f"""
             <div class="kpi-container">
-                <div class="kpi-label">Outstanding udhaar</div>
+                <div class="kpi-label">{t('outstanding_udhaar')}</div>
                 <div class="kpi-value" style="color: #B45309;">Rs {total_udhaar:,.0f}</div>
             </div>
             """,
@@ -1120,18 +1486,17 @@ with tab_dashboard:
         st.markdown(
             f"""
             <div class="kpi-container">
-                <div class="kpi-label">Unpaid bills</div>
+                <div class="kpi-label">{t('unpaid_bills')}</div>
                 <div class="kpi-value" style="color: #7F1D1D;">Rs {unpaid_bills_total:,.0f}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
     with mc4:
-        # Strictly labeled as specified
         st.markdown(
             f"""
             <div class="kpi-container">
-                <div class="kpi-label">Recorded cash sales this month</div>
+                <div class="kpi-label">{t('cash_sales_month')}</div>
                 <div class="kpi-value" style="color: #047857;">Rs {month_cash_sales:,.0f}</div>
             </div>
             """,
@@ -1140,7 +1505,99 @@ with tab_dashboard:
 
     st.divider()
 
-    # 3. Plotly Charts
+    # 3. GALLA HISAAB (CASH DRAWER RECONCILIATION)
+    st.markdown(f"### {t('galla_title')}")
+    st.caption("Verify that physical cash in the shop drawer matches recorded cash sales, customer repayments, and expenses.")
+
+    cash_summary = get_today_cash_summary(shop_id=active_shop)
+    c_s1, c_s2, c_s3, c_s4 = st.columns(4)
+    with c_s1:
+        opening_cash_val = st.number_input(
+            t("galla_opening", "Opening Cash (Rs)"),
+            min_value=0.0,
+            value=5000.0,
+            step=500.0,
+            key="galla_open_inp",
+        )
+    with c_s2:
+        st.metric("Recorded Cash Sales (+)", f"Rs {cash_summary['cash_sales']:,.0f}")
+    with c_s3:
+        st.metric("Cash Repayments Received (+)", f"Rs {cash_summary['cash_repayments']:,.0f}")
+    with c_s4:
+        st.metric("Cash Expenses Paid (-)", f"Rs {cash_summary['cash_expenses']:,.0f}")
+
+    expected_galla = opening_cash_val + cash_summary["cash_sales"] + cash_summary["cash_repayments"] - cash_summary["cash_expenses"]
+    st.markdown(f"#### **{t('expected_cash', 'Expected Cash in Drawer')}:** `Rs {expected_galla:,.0f}`")
+
+    with st.expander("🧮 Cash Denominations Counter (روپے کے نوٹ گننے کا کیلکولیٹر)"):
+        d_c1, d_c2, d_c3, d_c4 = st.columns(4)
+        with d_c1:
+            n_5000 = st.number_input("Rs 5,000 Notes", min_value=0, value=0, key="n5000")
+            n_1000 = st.number_input("Rs 1,000 Notes", min_value=0, value=0, key="n1000")
+        with d_c2:
+            n_500 = st.number_input("Rs 500 Notes", min_value=0, value=0, key="n500")
+            n_100 = st.number_input("Rs 100 Notes", min_value=0, value=0, key="n100")
+        with d_c3:
+            n_50 = st.number_input("Rs 50 Notes", min_value=0, value=0, key="n50")
+            n_20 = st.number_input("Rs 20 Notes", min_value=0, value=0, key="n20")
+        with d_c4:
+            n_10 = st.number_input("Rs 10 Notes", min_value=0, value=0, key="n10")
+            n_coins = st.number_input("Coins / سکّے (Rs)", min_value=0, value=0, key="ncoins")
+        counted_denom_total = (
+            (n_5000 * 5000)
+            + (n_1000 * 1000)
+            + (n_500 * 500)
+            + (n_100 * 100)
+            + (n_50 * 50)
+            + (n_20 * 20)
+            + (n_10 * 10)
+            + n_coins
+        )
+        st.info(f"Total from note calculator: **Rs {counted_denom_total:,.0f}**")
+
+    counted_actual = st.number_input(
+        t("galla_counted", "Counted Physical Cash in Drawer (Rs)"),
+        min_value=0.0,
+        value=float(counted_denom_total) if counted_denom_total > 0 else float(expected_galla),
+        step=100.0,
+        key="galla_actual_inp",
+    )
+
+    diff_galla = counted_actual - expected_galla
+    if abs(diff_galla) < 1.0:
+        st.success(t("galla_balanced"))
+    elif diff_galla > 0:
+        st.info(f"{t('galla_surplus')} (+Rs {diff_galla:,.0f})")
+    else:
+        st.warning(f"{t('galla_shortage')} (-Rs {abs(diff_galla):,.0f})")
+
+    g_note = st.text_input("Galla Reconciliation Note (optional):", placeholder="e.g. Closing cash drawer counted at 9 PM")
+    if st.button(t("galla_save"), type="primary"):
+        save_galla_reconciliation(
+            {
+                "recon_date": today.isoformat(),
+                "opening_cash": opening_cash_val,
+                "cash_sales": cash_summary["cash_sales"],
+                "cash_repayments": cash_summary["cash_repayments"],
+                "cash_expenses": cash_summary["cash_expenses"],
+                "expected_cash": expected_galla,
+                "actual_cash": counted_actual,
+                "difference": diff_galla,
+                "notes": g_note,
+            },
+            shop_id=active_shop,
+        )
+        st.toast("Galla reconciliation saved!", icon="✅")
+        st.rerun()
+
+    galla_hist_df = get_galla_history(shop_id=active_shop)
+    if not galla_hist_df.empty:
+        with st.expander("📜 View Past Galla Reconciliation Records"):
+            st.dataframe(galla_hist_df, hide_index=True)
+
+    st.divider()
+
+    # 4. Plotly Charts
     col_ch1, col_ch2 = st.columns(2)
 
     with col_ch1:
@@ -1166,7 +1623,6 @@ with tab_dashboard:
             exp_copy = exp_df.copy()
             exp_copy["month"] = exp_copy["txn_date"].str.slice(0, 7)
             monthly_exp = exp_copy.groupby("month", as_index=False)["amount"].sum().sort_values("month")
-            # "2026-08" strings were read by Plotly as dates and ticked by day; label months explicitly
             monthly_exp["month"] = pd.to_datetime(monthly_exp["month"] + "-01", errors="coerce").dt.strftime("%b %Y")
             monthly_exp = monthly_exp.dropna(subset=["month"])
             fig_mo = px.bar(
@@ -1183,7 +1639,7 @@ with tab_dashboard:
         else:
             st.info("No monthly expense data available.")
 
-    # 3.1 Cash Sales Trend (Last 30 days)
+    # 4.1 Cash Sales Trend (Last 30 days)
     st.markdown("#### 📈 Recorded Cash Sales (Last 30 Days)")
     thirty_days_ago = (today - timedelta(days=30)).isoformat()
     cash_sales_df = (
@@ -1211,7 +1667,7 @@ with tab_dashboard:
 
     st.divider()
 
-    # 4. Unpaid Bills Management Table
+    # 5. Unpaid Bills Management Table
     st.markdown("#### ⚡ Unpaid Bills List")
     if unpaid_bills_df.empty:
         st.success("All utility and vendor bills have been marked paid!")
@@ -1246,7 +1702,7 @@ with tab_dashboard:
 
     st.divider()
 
-    # 5. Natural Language Financial Q&A: Ask Your Hisaab
+    # 6. Natural Language Financial Q&A: Ask Your Hisaab
     st.markdown(f"#### 💬 Ask Your Hisaab ({model_name})")
     st.caption("Ask financial questions in Urdu, Roman Urdu, or English about your shop expenses and ledger.")
 

@@ -39,7 +39,7 @@ def get_connection(db_path: Path | str = DB_FILE) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path | str = DB_FILE) -> None:
-    """Creates the ledger and customers tables if they do not exist."""
+    """Creates the ledger, customers, inventory, galla, and shops tables if they do not exist."""
     conn = get_connection(db_path)
     try:
         with conn:
@@ -57,7 +57,8 @@ def init_db(db_path: Path | str = DB_FILE) -> None:
                     due_date TEXT,
                     note TEXT,
                     source TEXT NOT NULL,
-                    doc_type TEXT NOT NULL
+                    doc_type TEXT NOT NULL,
+                    shop_id TEXT DEFAULT 'madina_store'
                 )
                 """
             )
@@ -66,14 +67,77 @@ def init_db(db_path: Path | str = DB_FILE) -> None:
                 CREATE TABLE IF NOT EXISTS customers (
                     party_key TEXT PRIMARY KEY,
                     display_name TEXT NOT NULL,
-                    phone TEXT
+                    phone TEXT,
+                    shop_id TEXT DEFAULT 'madina_store'
                 )
                 """
             )
-            # Helpful indexes for performance on larger ledgers
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inventory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    shop_id TEXT DEFAULT 'madina_store',
+                    item_name TEXT NOT NULL,
+                    category TEXT DEFAULT 'Stock / Inventory',
+                    quantity REAL DEFAULT 0.0,
+                    unit TEXT DEFAULT 'kg',
+                    cost_price REAL DEFAULT 0.0,
+                    sale_price REAL DEFAULT 0.0,
+                    min_stock REAL DEFAULT 5.0,
+                    last_updated TEXT,
+                    UNIQUE(shop_id, item_name)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS galla_reconciliations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reconciled_at TEXT NOT NULL,
+                    recon_date TEXT NOT NULL,
+                    shop_id TEXT DEFAULT 'madina_store',
+                    opening_cash REAL DEFAULT 0.0,
+                    cash_sales REAL DEFAULT 0.0,
+                    cash_repayments REAL DEFAULT 0.0,
+                    cash_expenses REAL DEFAULT 0.0,
+                    expected_cash REAL DEFAULT 0.0,
+                    actual_cash REAL DEFAULT 0.0,
+                    difference REAL DEFAULT 0.0,
+                    status TEXT DEFAULT 'balanced',
+                    notes TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shops (
+                    shop_id TEXT PRIMARY KEY,
+                    shop_name TEXT NOT NULL,
+                    pin_code TEXT DEFAULT '1234',
+                    owner_name TEXT,
+                    phone TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+            # Schema migrations if columns don't exist
+            for alter_sql in [
+                "ALTER TABLE ledger ADD COLUMN shop_id TEXT DEFAULT 'madina_store'",
+                "ALTER TABLE customers ADD COLUMN shop_id TEXT DEFAULT 'madina_store'",
+            ]:
+                try:
+                    conn.execute(alter_sql)
+                except Exception:
+                    pass
+
+            # Helpful indexes for performance
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_party ON ledger(party)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_txn_date ON ledger(txn_date)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_type ON ledger(type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_shop ON ledger(shop_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_shop ON inventory(shop_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_galla_shop ON galla_reconciliations(shop_id)")
     finally:
         conn.close()
 
@@ -643,4 +707,405 @@ def seed_demo_data(db_path: Path | str = DB_FILE) -> int:
         },
     ]
 
-    return add_transactions(seed_entries, source="demo", doc_type="demo", db_path=db_path)
+    inserted = add_transactions(seed_entries, source="demo", doc_type="demo", db_path=db_path)
+
+    # Seed default shops
+    create_or_get_shop("madina_store", "Madina General Store", "1234", db_path=db_path)
+    create_or_get_shop("bismillah_store", "Bismillah Kiryana", "1234", db_path=db_path)
+
+    # Seed demo inventory for Pakistani Kiryana store
+    demo_inventory = [
+        {"item_name": "Atta (Wheat Flour)", "category": "Stock / Inventory", "quantity": 25.0, "unit": "bag (20kg)", "cost_price": 2400.0, "sale_price": 2650.0, "min_stock": 5.0},
+        {"item_name": "Cheeni (Sugar)", "category": "Stock / Inventory", "quantity": 18.0, "unit": "bag (50kg)", "cost_price": 6800.0, "sale_price": 7200.0, "min_stock": 4.0},
+        {"item_name": "Super Basmati Rice", "category": "Stock / Inventory", "quantity": 14.0, "unit": "bag (25kg)", "cost_price": 7500.0, "sale_price": 8200.0, "min_stock": 3.0},
+        {"item_name": "Cooking Oil / Ghee", "category": "Stock / Inventory", "quantity": 22.0, "unit": "tin (5L)", "cost_price": 2450.0, "sale_price": 2700.0, "min_stock": 5.0},
+        {"item_name": "Dal Chana", "category": "Stock / Inventory", "quantity": 40.0, "unit": "kg", "cost_price": 260.0, "sale_price": 310.0, "min_stock": 10.0},
+        {"item_name": "Dal Moong", "category": "Stock / Inventory", "quantity": 35.0, "unit": "kg", "cost_price": 290.0, "sale_price": 340.0, "min_stock": 8.0},
+        {"item_name": "Chai Patti (Danedar)", "category": "Stock / Inventory", "quantity": 45.0, "unit": "pack (450g)", "cost_price": 620.0, "sale_price": 700.0, "min_stock": 10.0},
+        {"item_name": "Milk Pack (Carton)", "category": "Stock / Inventory", "quantity": 12.0, "unit": "carton", "cost_price": 3100.0, "sale_price": 3400.0, "min_stock": 4.0},
+    ]
+    for item in demo_inventory:
+        add_or_update_stock(
+            item_name=item["item_name"],
+            quantity=item["quantity"],
+            unit=item["unit"],
+            cost_price=item["cost_price"],
+            sale_price=item["sale_price"],
+            min_stock=item["min_stock"],
+            category=item["category"],
+            shop_id="madina_store",
+            db_path=db_path,
+        )
+
+    # Seed an initial Galla Reconciliation record
+    save_galla_reconciliation(
+        {
+            "recon_date": today.isoformat(),
+            "opening_cash": 5000.0,
+            "cash_sales": 8300.0,
+            "cash_repayments": 0.0,
+            "cash_expenses": 0.0,
+            "expected_cash": 13300.0,
+            "actual_cash": 13300.0,
+            "difference": 0.0,
+            "status": "balanced",
+            "notes": "Morning counter opening reconciliation",
+        },
+        shop_id="madina_store",
+        db_path=db_path,
+    )
+
+    return inserted
+
+
+# ==============================================================================
+# INVENTORY MANAGEMENT
+# ==============================================================================
+
+def get_inventory(shop_id: str = "madina_store", db_path: Path | str = DB_FILE) -> pd.DataFrame:
+    """Returns inventory items for the given shop_id as a pandas DataFrame."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        query = """
+            SELECT id, shop_id, item_name, category, quantity, unit,
+                   cost_price, sale_price, min_stock, last_updated,
+                   (quantity * cost_price) AS total_cost_value,
+                   (quantity * sale_price) AS total_sale_value
+            FROM inventory
+            WHERE shop_id = ?
+            ORDER BY item_name ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(shop_id,))
+        return df
+    finally:
+        conn.close()
+
+
+def add_or_update_stock(
+    item_name: str,
+    quantity: float,
+    unit: str = "kg",
+    cost_price: float = 0.0,
+    sale_price: float = 0.0,
+    min_stock: float = 5.0,
+    category: str = "Stock / Inventory",
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> bool:
+    """Adds or updates an inventory item stock level."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    clean_name = item_name.strip()
+    if not clean_name:
+        return False
+    now_iso = datetime.now().isoformat()
+
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO inventory (
+                    shop_id, item_name, category, quantity, unit,
+                    cost_price, sale_price, min_stock, last_updated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shop_id, item_name) DO UPDATE SET
+                    quantity = excluded.quantity,
+                    unit = excluded.unit,
+                    cost_price = CASE WHEN excluded.cost_price > 0 THEN excluded.cost_price ELSE inventory.cost_price END,
+                    sale_price = CASE WHEN excluded.sale_price > 0 THEN excluded.sale_price ELSE inventory.sale_price END,
+                    min_stock = excluded.min_stock,
+                    last_updated = excluded.last_updated
+                """,
+                (shop_id, clean_name, category, quantity, unit, cost_price, sale_price, min_stock, now_iso),
+            )
+            return True
+    finally:
+        conn.close()
+
+
+def deduct_stock(
+    item_name: str,
+    quantity_to_deduct: float,
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> bool:
+    """Deducts stock when an item is sold."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                UPDATE inventory
+                SET quantity = MAX(0.0, quantity - ?),
+                    last_updated = ?
+                WHERE shop_id = ? AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))
+                """,
+                (quantity_to_deduct, datetime.now().isoformat(), shop_id, item_name),
+            )
+            return True
+    finally:
+        conn.close()
+
+
+def update_inventory_from_line_items(
+    line_items: List[Dict[str, Any]],
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> int:
+    """
+    Automatically increments or adds inventory stock when a wholesale invoice with line items is saved.
+    Returns the count of updated stock items.
+    """
+    if not line_items:
+        return 0
+    init_db(db_path)
+    updated = 0
+    for item in line_items:
+        desc = str(item.get("description") or "").strip()
+        if not desc:
+            continue
+        qty = float(item.get("qty") or 1.0)
+        amount = float(item.get("amount") or 0.0)
+        rate = amount / qty if qty > 0 and amount > 0 else 0.0
+
+        conn = get_connection(db_path)
+        try:
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT quantity, cost_price FROM inventory WHERE shop_id = ? AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))",
+                    (shop_id, desc),
+                )
+                row = cursor.fetchone()
+                now_iso = datetime.now().isoformat()
+                if row:
+                    new_qty = float(row["quantity"]) + qty
+                    new_cost = rate if rate > 0 else float(row["cost_price"])
+                    cursor.execute(
+                        "UPDATE inventory SET quantity = ?, cost_price = ?, last_updated = ? WHERE shop_id = ? AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))",
+                        (new_qty, new_cost, now_iso, shop_id, desc),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO inventory (shop_id, item_name, quantity, unit, cost_price, sale_price, last_updated)
+                        VALUES (?, ?, ?, 'unit', ?, ?, ?)
+                        """,
+                        (shop_id, desc, qty, rate, rate * 1.15, now_iso),
+                    )
+                updated += 1
+        finally:
+            conn.close()
+    return updated
+
+
+# ==============================================================================
+# GALLA HISAAB (CASH DRAWER RECONCILIATION)
+# ==============================================================================
+
+def get_today_cash_summary(
+    date_str: Optional[str] = None,
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> Dict[str, float]:
+    """
+    Computes cash movements for a given date (defaults to today):
+    - Recorded cash sales (+)
+    - Recorded cash repayments received from credit customers (+)
+    - Recorded cash expenses (-)
+    """
+    init_db(db_path)
+    target_date = date_str or date.today().isoformat()
+    conn = get_connection(db_path)
+    try:
+        # Cash sales
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) AS total FROM ledger WHERE shop_id = ? AND txn_date = ? AND type = 'cash_sale'",
+            (shop_id, target_date),
+        )
+        sales = float(cursor.fetchone()["total"])
+
+        # Cash repayments received
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) AS total FROM ledger WHERE shop_id = ? AND txn_date = ? AND type = 'payment_received'",
+            (shop_id, target_date),
+        )
+        repayments = float(cursor.fetchone()["total"])
+
+        # Cash expenses paid today
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) AS total FROM ledger WHERE shop_id = ? AND txn_date = ? AND type = 'expense' AND LOWER(status) = 'paid'",
+            (shop_id, target_date),
+        )
+        expenses = float(cursor.fetchone()["total"])
+
+        return {
+            "date": target_date,
+            "cash_sales": sales,
+            "cash_repayments": repayments,
+            "cash_expenses": expenses,
+            "net_cash_flow": sales + repayments - expenses,
+        }
+    finally:
+        conn.close()
+
+
+def save_galla_reconciliation(
+    recon_data: Dict[str, Any],
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> int:
+    """Saves a daily cash drawer reconciliation record."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    now_iso = datetime.now().isoformat()
+    recon_date = str(recon_data.get("recon_date") or date.today().isoformat())
+    opening = float(recon_data.get("opening_cash") or 0.0)
+    sales = float(recon_data.get("cash_sales") or 0.0)
+    repayments = float(recon_data.get("cash_repayments") or 0.0)
+    expenses = float(recon_data.get("cash_expenses") or 0.0)
+    expected = float(recon_data.get("expected_cash") or (opening + sales + repayments - expenses))
+    actual = float(recon_data.get("actual_cash") or 0.0)
+    diff = float(recon_data.get("difference") or (actual - expected))
+
+    if abs(diff) < 1.0:
+        status = "balanced"
+    elif diff > 0:
+        status = "surplus"
+    else:
+        status = "shortage"
+
+    notes = str(recon_data.get("notes") or "").strip()
+
+    try:
+        with conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO galla_reconciliations (
+                    reconciled_at, recon_date, shop_id, opening_cash,
+                    cash_sales, cash_repayments, cash_expenses,
+                    expected_cash, actual_cash, difference, status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now_iso, recon_date, shop_id, opening, sales,
+                    repayments, expenses, expected, actual, diff, status, notes
+                ),
+            )
+            return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_galla_history(
+    shop_id: str = "madina_store",
+    db_path: Path | str = DB_FILE,
+) -> pd.DataFrame:
+    """Returns past cash drawer reconciliations for the shop."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        query = """
+            SELECT id, recon_date, reconciled_at, opening_cash,
+                   cash_sales, cash_repayments, cash_expenses,
+                   expected_cash, actual_cash, difference, status, notes
+            FROM galla_reconciliations
+            WHERE shop_id = ?
+            ORDER BY recon_date DESC, id DESC
+        """
+        return pd.read_sql_query(query, conn, params=(shop_id,))
+    finally:
+        conn.close()
+
+
+# ==============================================================================
+# SHOPS & SECURITY PIN MANAGEMENT
+# ==============================================================================
+
+def get_all_shops(db_path: Path | str = DB_FILE) -> List[Dict[str, Any]]:
+    """Returns all registered shop profiles."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT shop_id, shop_name, pin_code, owner_name, phone, created_at FROM shops ORDER BY shop_name ASC")
+        rows = cursor.fetchall()
+        if not rows:
+            create_or_get_shop("madina_store", "Madina General Store", "1234", db_path=db_path)
+            return [{"shop_id": "madina_store", "shop_name": "Madina General Store", "pin_code": "1234"}]
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def create_or_get_shop(
+    shop_id: str,
+    shop_name: str,
+    pin_code: str = "1234",
+    owner_name: str = "Shopkeeper",
+    phone: str = "",
+    db_path: Path | str = DB_FILE,
+) -> Dict[str, Any]:
+    """Ensures a shop profile exists or creates it with a default PIN."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    clean_id = shop_id.strip().lower().replace(" ", "_")
+    clean_name = shop_name.strip()
+    clean_pin = str(pin_code).strip() or "1234"
+    now_iso = datetime.now().isoformat()
+
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO shops (shop_id, shop_name, pin_code, owner_name, phone, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shop_id) DO UPDATE SET
+                    shop_name = excluded.shop_name
+                """,
+                (clean_id, clean_name, clean_pin, owner_name, phone, now_iso),
+            )
+        return {"shop_id": clean_id, "shop_name": clean_name, "pin_code": clean_pin}
+    finally:
+        conn.close()
+
+
+def verify_shop_pin(
+    shop_id: str,
+    pin: str,
+    db_path: Path | str = DB_FILE,
+) -> bool:
+    """Verifies the 4-digit PIN for a shop profile."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT pin_code FROM shops WHERE shop_id = ?", (shop_id,))
+        row = cursor.fetchone()
+        if not row:
+            return pin.strip() == "1234"
+        return row["pin_code"].strip() == pin.strip()
+    finally:
+        conn.close()
+
+
+def update_shop_pin(
+    shop_id: str,
+    new_pin: str,
+    db_path: Path | str = DB_FILE,
+) -> bool:
+    """Updates the security PIN for a shop."""
+    clean_pin = new_pin.strip()
+    if len(clean_pin) < 4:
+        return False
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.execute("UPDATE shops SET pin_code = ? WHERE shop_id = ?", (clean_pin, shop_id))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
