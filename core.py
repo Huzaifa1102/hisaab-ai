@@ -334,21 +334,20 @@ Rules:
 # ==============================================================================
 
 
-def resolve_model_name(model_name: Optional[str]) -> str:
+def clean_model_name(model_name: Optional[str]) -> str:
     """
-    Normalizes model names and auto-promotes deprecated or unavailable models.
-    Maps gemini-2.5-flash / gemini-1.5-flash -> gemini-3.8-flash.
+    Trims whitespace and strips any leading 'models/' prefix without rewriting the name.
+    Strictly respects the user's chosen model in the sidebar.
     """
     if not model_name:
         return "gemini-3.8-flash"
-    m = model_name.strip()
+    m = str(model_name).strip()
     if m.startswith("models/"):
         m = m[7:]
-    if m in ("gemini-2.5-flash", "gemini-1.5-flash"):
-        return "gemini-3.8-flash"
-    if m in ("gemini-1.5-pro", "gemini-2.5-pro"):
-        return "gemini-3.8-pro"
-    return m
+    return m or "gemini-3.8-flash"
+
+# Backwards compatibility alias
+resolve_model_name = clean_model_name
 
 
 def extract_from_image(
@@ -361,7 +360,7 @@ def extract_from_image(
     with Pydantic structured output, normalizes entries, and drops unreadable amounts.
     Retries once on failure before raising a friendly human-readable exception.
     """
-    model_name = resolve_model_name(model_name)
+    model_name = clean_model_name(model_name)
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
         raise ValueError(
@@ -424,8 +423,10 @@ def extract_from_image(
         raise ValueError("Invalid Gemini API Key. Please verify your key on Google AI Studio.")
     elif "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
         raise ValueError("Gemini API rate limit exceeded. Please wait a few moments or switch to offline demo mode.")
-    elif "NOT_FOUND" in err_str or "404" in err_str:
-        raise ValueError(f"Model '{model_name}' not found. Check the model name in the sidebar (e.g. gemini-2.5-flash).")
+    elif "NOT_FOUND" in err_str or "404" in err_str or "not found" in err_str.lower():
+        raise ValueError(
+            f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_str}"
+        )
     elif "timeout" in err_str.lower() or "deadline" in err_str.lower():
         raise ValueError("Gemini request timed out after 45s. Please check your network connection or try a smaller image.")
     else:
@@ -444,10 +445,11 @@ def draft_reminder(
     language: str,
     api_key: str,
     model_name: str = "gemini-3.8-flash",
-) -> str:
+) -> Tuple[str, str]:
     """
     Generates a polite, respectful WhatsApp payment reminder.
-    Falls back gracefully to a warm pre-defined template if the API is offline or fails.
+    Returns (reminder_text, source_label).
+    Source label is either 'AI answer' or 'Template message (AI unavailable)'.
     """
     fallback = (
         f"Assalam o Alaikum {customer} sahab! {shop_name} ke khate mein aap ka "
@@ -456,9 +458,9 @@ def draft_reminder(
 
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.startswith("your_"):
-        return fallback
+        return fallback, "Template message (AI unavailable)"
 
-    model_name = resolve_model_name(model_name)
+    model_name = clean_model_name(model_name)
     prompt = (
         f"Write a short, polite, respectful WhatsApp payment reminder from '{shop_name}' to the customer "
         f"'{customer}' for Rs {amount:,.0f} outstanding credit. "
@@ -480,11 +482,11 @@ def draft_reminder(
             ),
         )
         if resp and resp.text:
-            return resp.text.strip()
+            return resp.text.strip(), "AI answer"
     except Exception:
         pass
 
-    return fallback
+    return fallback, "Template message (AI unavailable)"
 
 
 def local_hisaab_answer(question: str, ledger_df: pd.DataFrame) -> Optional[str]:
@@ -554,13 +556,13 @@ def ask_ledger(
     ledger_df: pd.DataFrame,
     api_key: str,
     model_name: str = "gemini-3.8-flash",
-) -> str:
+) -> Tuple[str, str]:
     """
     Answers natural language queries about the shopkeeper's books using the recent ledger data.
-    Automatically resolves deprecated models to gemini-3.8-flash and falls back to local
-    analytical calculations if offline or on API failure.
+    Returns (answer_text, source_label).
+    Source label is either 'AI answer' or 'Calculated from your ledger (offline, not AI)'.
     """
-    model_name = resolve_model_name(model_name)
+    model_name = clean_model_name(model_name)
     clean_key = (api_key or "").strip()
 
     # Pre-check local analytic answers
@@ -568,11 +570,14 @@ def ask_ledger(
 
     if not clean_key or clean_key.startswith("your_"):
         if local_ans:
-            return local_ans
-        return "Please enter a valid Gemini API key in the sidebar to use 'Ask your hisaab'."
+            return local_ans, "Calculated from your ledger (offline, not AI)"
+        return (
+            "Please enter a valid Gemini API key in the sidebar to use 'Ask your hisaab'.",
+            "Notice",
+        )
 
     if ledger_df.empty:
-        return "Your ledger is currently empty. Add transactions or load demo data first."
+        return "Your ledger is currently empty. Add transactions or load demo data first.", "Notice"
 
     # Take recent 300 rows and convert to concise CSV
     recent_slice = ledger_df.head(300)[
@@ -607,15 +612,21 @@ Rules:
             ),
         )
         if resp and resp.text:
-            return resp.text.strip()
+            return resp.text.strip(), "AI answer"
         if local_ans:
-            return local_ans
-        return "No answer could be generated. Please rephrase your question."
+            return local_ans, "Calculated from your ledger (offline, not AI)"
+        return "No answer could be generated. Please rephrase your question.", "Notice"
     except Exception as e:
         # Fall back gracefully to local analysis rather than displaying raw API error
         if local_ans:
-            return local_ans
-        return f"Could not answer hisaab query via AI: {e}"
+            return local_ans, "Calculated from your ledger (offline, not AI)"
+        err_msg = str(e)
+        if "NOT_FOUND" in err_msg or "404" in err_msg or "not found" in err_msg.lower():
+            return (
+                f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_msg}",
+                "Model Error",
+            )
+        return f"Could not answer hisaab query via AI: {err_msg}", "Error"
 
 
 def whatsapp_link(phone: Optional[str], message: str) -> Optional[str]:
@@ -746,5 +757,9 @@ Never guess amounts. doc_type = "voice". Transcript: "{transcript}"
     except Exception as e:
         err_msg = str(e)
         if "API_KEY_INVALID" in err_msg or "401" in err_msg:
-            raise ValueError("Invalid Gemini API Key.")
+            raise ValueError("Invalid Gemini API Key. Please verify your key on Google AI Studio.")
+        elif "NOT_FOUND" in err_msg or "404" in err_msg or "not found" in err_msg.lower():
+            raise ValueError(
+                f"Model '{model_name}' was not found. Please change the model name in the sidebar (e.g. gemini-3.8-flash). API Error details: {err_msg}"
+            )
         raise RuntimeError(f"Voice extraction failed: {err_msg}")

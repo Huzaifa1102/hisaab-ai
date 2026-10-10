@@ -40,28 +40,15 @@ from db import (
 from core import (
     ExtractionResult,
     ask_ledger,
+    clean_model_name,
     draft_reminder,
     extract_from_image,
     extract_from_text,
     normalize_entry,
+    resolve_model_name,
     transcribe_audio,
     whatsapp_link,
 )
-
-try:
-    from core import resolve_model_name
-except ImportError:
-    def resolve_model_name(model_name: Optional[str]) -> str:
-        if not model_name:
-            return "gemini-3.8-flash"
-        m = str(model_name).strip()
-        if m.startswith("models/"):
-            m = m[7:]
-        if m in ("gemini-2.5-flash", "gemini-1.5-flash"):
-            return "gemini-3.8-flash"
-        if m in ("gemini-1.5-pro", "gemini-2.5-pro"):
-            return "gemini-3.8-pro"
-        return m
 
 # Load environment configuration
 dotenv.load_dotenv()
@@ -265,9 +252,9 @@ with st.sidebar:
     raw_model_input = st.text_input(
         "Gemini Model",
         value=default_model,
-        help="Default: gemini-3.8-flash (Latest active model for Google AI Studio).",
+        help="Default: gemini-3.8-flash (Model actually used will match this field).",
     )
-    model_name = resolve_model_name(raw_model_input)
+    model_name = clean_model_name(raw_model_input)
 
     env_gemini_key = os.getenv("GEMINI_API_KEY", "")
     api_key = st.text_input(
@@ -288,6 +275,12 @@ with st.sidebar:
     )
 
     shop_name = st.text_input("Shop Name", value="Madina General Store")
+
+    show_voice_tab = st.checkbox(
+        "Show Voice Khata tab",
+        value=True,
+        help="Toggle to show/hide the Voice Khata tab during demo.",
+    )
 
     st.divider()
     st.subheader("🧪 Demo Utilities")
@@ -362,6 +355,12 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
         conf_pct = int(raw_result.confidence * 100) if raw_result.confidence else 92
         st.write(f"**Detected Type:** `{doc_type}` | **Confidence:** `{conf_pct}%`")
         st.info(f"**Summary:** {raw_result.summary}")
+
+        if doc_type == "other":
+            st.warning("⚠️ **Non-financial image detected.** No business or ledger transactions were identified in this photo.")
+
+        if not entries_list:
+            st.info("ℹ️ No financial entries were found in this document.")
 
         # AI Warnings
         if raw_result.warnings:
@@ -441,12 +440,28 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
 # ==============================================================================
 # MAIN TABS INTERFACE
 # ==============================================================================
-tabs = st.tabs(["📷 Smart Scan", "🎙️ Voice Khata", "📒 Ledger", "👥 Udhaar", "📊 Dashboard"])
+tab_titles = ["📷 Smart Scan"]
+if show_voice_tab:
+    tab_titles.append("🎙️ Voice Khata")
+tab_titles.extend(["📒 Ledger", "👥 Udhaar", "📊 Dashboard"])
+tabs = st.tabs(tab_titles)
+
+tab_scan = tabs[0]
+if show_voice_tab:
+    tab_voice = tabs[1]
+    tab_ledger = tabs[2]
+    tab_udhaar = tabs[3]
+    tab_dashboard = tabs[4]
+else:
+    tab_voice = None
+    tab_ledger = tabs[1]
+    tab_udhaar = tabs[2]
+    tab_dashboard = tabs[3]
 
 # ------------------------------------------------------------------------------
 # TAB 1: SMART SCAN
 # ------------------------------------------------------------------------------
-with tabs[0]:
+with tab_scan:
     st.subheader("📷 Smart Document Scanner")
     st.caption("Upload photos of receipts, wholesaler invoices, utility bills (IESCO/SNGPL/PTCL), or handwritten khata pages.")
 
@@ -500,7 +515,7 @@ with tabs[0]:
                         "Turn off offline mode or ensure the cache file exists."
                     )
             else:
-                with st.spinner(f"Reading and analyzing '{filename}' with Gemini 3.8 Flash..."):
+                with st.spinner(f"Reading and analyzing '{filename}' with {model_name}..."):
                     try:
                         res, normalized_list = extract_from_image(
                             file_bytes,
@@ -555,72 +570,80 @@ with tabs[0]:
 # ------------------------------------------------------------------------------
 # TAB 2: VOICE KHATA (PHASE 2)
 # ------------------------------------------------------------------------------
-with tabs[1]:
-    st.subheader("🎙️ Voice Khata (Audio Khata Entry)")
-    st.caption("Speak transaction details in Urdu or Roman Urdu (e.g., 'Ahmed ne 500 rupay ka atta udhaar liya').")
+if show_voice_tab and tab_voice is not None:
+    with tab_voice:
+        st.subheader("🎙️ Voice Khata (Audio Khata Entry)")
+        st.caption("Speak transaction details in Urdu or Roman Urdu (e.g., 'Ahmed ne 500 rupay ka atta udhaar liya').")
 
-    if offline_mode:
-        st.info("💡 Note: Voice transcription requires online Groq / Whisper API. Offline mode does not apply to speech.")
+        if offline_mode:
+            st.info("💡 Note: Voice transcription requires online Groq / Whisper API. Offline mode does not apply to speech.")
 
-    voice_audio = st.audio_input("Record a transaction voice note:")
+        voice_audio = st.audio_input("Record a transaction voice note:")
 
-    if voice_audio:
-        audio_bytes = voice_audio.getvalue()
+        if voice_audio:
+            audio_bytes = voice_audio.getvalue()
 
-        col_v1, col_v2 = st.columns([1, 1])
-        with col_v1:
-            if st.button("🎧 Transcribe Speech (Groq Whisper)", type="primary"):
-                if not groq_key:
-                    st.error(
-                        "Groq API key is missing. Please enter your GROQ_API_KEY in the sidebar "
-                        "(get a free key from https://console.groq.com/)."
-                    )
-                else:
-                    with st.spinner("Transcribing speech with Whisper-large-v3..."):
-                        try:
-                            transcript = transcribe_audio(audio_bytes, "voice_khata.wav", groq_key)
-                            st.session_state.voice_transcript = transcript
-                            st.success("Transcribed successfully!")
-                        except Exception as e:
-                            st.error(f"Transcription failed: {e}")
+            col_v1, col_v2 = st.columns([1, 1])
+            with col_v1:
+                if st.button("🎧 Transcribe Speech (Groq Whisper)", type="primary"):
+                    if not groq_key:
+                        st.error(
+                            "Groq API key is missing. Please enter your GROQ_API_KEY in the sidebar "
+                            "(get a free key from https://console.groq.com/)."
+                        )
+                    else:
+                        with st.spinner("Transcribing speech with Whisper-large-v3..."):
+                            try:
+                                transcript = transcribe_audio(audio_bytes, "voice_khata.wav", groq_key)
+                                st.session_state.voice_transcript = transcript
+                                st.success("Transcribed successfully!")
+                            except Exception as e:
+                                st.error(f"Transcription failed: {e}")
 
-    # Editable transcript area
-    if st.session_state.voice_transcript:
-        st.markdown("**Transcript (Edit if needed before extracting):**")
-        edited_transcript = st.text_area(
-            "Spoken Transcript",
-            value=st.session_state.voice_transcript,
-            height=90,
-            label_visibility="collapsed",
-        )
+        # Editable transcript area
+        if st.session_state.voice_transcript:
+            st.markdown("**Transcript (Edit if needed before extracting):**")
+            edited_transcript = st.text_area(
+                "Spoken Transcript",
+                value=st.session_state.voice_transcript,
+                height=90,
+                label_visibility="collapsed",
+            )
 
-        if st.button("✨ Extract Ledger Entries from Voice Note", type="primary"):
-            with st.spinner("Converting spoken note into structured transactions with Gemini 3.8 Flash..."):
-                try:
-                    res, norm_entries = extract_from_text(
-                        edited_transcript,
-                        api_key=api_key,
-                        model_name=model_name,
-                    )
-                    st.session_state.pending_docs.append({
-                        "result": res,
-                        "entries": norm_entries,
-                        "img_bytes": None,
-                        "transcript": edited_transcript,
-                        "filename": f"Voice Note ({datetime.now().strftime('%H:%M:%S')})",
-                        "doc_type": "voice",
-                        "is_offline": False,
-                    })
-                    st.session_state.voice_transcript = ""
-                    st.toast("Voice transaction extracted! Review it below or in Smart Scan.", icon="✅")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Voice extraction error: {e}")
+            if st.button("✨ Extract Ledger Entries from Voice Note", type="primary"):
+                with st.spinner("Converting spoken note into structured transactions with Gemini..."):
+                    try:
+                        res, norm_entries = extract_from_text(
+                            edited_transcript,
+                            api_key=api_key,
+                            model_name=model_name,
+                        )
+                        st.session_state.pending_docs.append({
+                            "result": res,
+                            "entries": norm_entries,
+                            "img_bytes": None,
+                            "transcript": edited_transcript,
+                            "filename": f"Voice Note ({datetime.now().strftime('%H:%M:%S')})",
+                            "doc_type": "voice",
+                            "is_offline": False,
+                        })
+                        st.session_state.voice_transcript = ""
+                        st.toast("Voice transaction extracted! Review it below or in Smart Scan.", icon="✅")
+                        st.rerun()
+                    except Exception as e:
+                        err_str = str(e)
+                        if "not found" in err_str.lower():
+                            st.error(
+                                f"❌ Model selection error: {err_str}\n\n"
+                                "Please check the 'Gemini Model' field in the sidebar (e.g. `gemini-3.8-flash`)."
+                            )
+                        else:
+                            st.error(f"Voice extraction error: {e}")
 
 # ------------------------------------------------------------------------------
 # TAB 3: LEDGER
 # ------------------------------------------------------------------------------
-with tabs[2]:
+with tab_ledger:
     st.subheader("📒 Digital Ledger")
     df_all = get_all_transactions()
 
@@ -756,7 +779,7 @@ with tabs[2]:
 # ------------------------------------------------------------------------------
 # TAB 4: UDHAAR (CUSTOMER KHATA & WHATSAPP)
 # ------------------------------------------------------------------------------
-with tabs[3]:
+with tab_udhaar:
     st.subheader("👥 Udhaar (Customer Khata)")
     st.caption("Track who owes money, view individual khata history, and send polite WhatsApp payment reminders.")
 
@@ -843,8 +866,8 @@ with tabs[3]:
                 )
 
                 if st.button("✍️ Draft AI Reminder", type="primary"):
-                    with st.spinner("Drafting respectful payment reminder with Gemini 3.8 Flash..."):
-                        reminder_msg = draft_reminder(
+                    with st.spinner(f"Drafting respectful payment reminder with {model_name}..."):
+                        reminder_msg, draft_source = draft_reminder(
                             shop_name=shop_name,
                             customer=selected_customer,
                             amount=cust_balance,
@@ -852,14 +875,31 @@ with tabs[3]:
                             api_key=api_key,
                             model_name=model_name,
                         )
-                        st.session_state.drafted_reminders[selected_customer] = reminder_msg
+                        st.session_state.drafted_reminders[selected_customer] = {
+                            "text": reminder_msg,
+                            "source": draft_source,
+                        }
 
             with col_u2:
-                current_draft = st.session_state.drafted_reminders.get(
-                    selected_customer,
-                    f"Assalam o Alaikum {selected_customer} sahab! {shop_name} ke khate mein aap ka "
-                    f"Rs {cust_balance:,.0f} baqi hai. Jab suhoolat ho ada kar dijiye. Shukriya!",
-                )
+                saved_draft = st.session_state.drafted_reminders.get(selected_customer)
+                if isinstance(saved_draft, dict):
+                    current_draft = saved_draft.get("text", "")
+                    draft_source = saved_draft.get("source", "Template message (AI unavailable)")
+                elif isinstance(saved_draft, str):
+                    current_draft = saved_draft
+                    draft_source = "Template message (AI unavailable)"
+                else:
+                    current_draft = (
+                        f"Assalam o Alaikum {selected_customer} sahab! {shop_name} ke khate mein aap ka "
+                        f"Rs {cust_balance:,.0f} baqi hai. Jab suhoolat ho ada kar dijiye. Shukriya!"
+                    )
+                    draft_source = "Template message (AI unavailable)"
+
+                if draft_source == "AI answer":
+                    st.caption("✨ **AI answer**")
+                else:
+                    st.caption("⚠️ **Template message (AI unavailable)**")
+
                 edited_msg = st.text_area(
                     "Editable Reminder Message:",
                     value=current_draft,
@@ -894,7 +934,7 @@ with tabs[3]:
 # ------------------------------------------------------------------------------
 # TAB 5: DASHBOARD
 # ------------------------------------------------------------------------------
-with tabs[4]:
+with tab_dashboard:
     st.subheader("📊 Financial Dashboard & Analytics")
 
     today = date.today()
@@ -1099,11 +1139,18 @@ with tabs[4]:
         ask_clicked = st.button("🔍 Ask AI", type="primary")
 
     if ask_clicked and user_query:
-        with st.spinner("Analyzing your ledger records..."):
-            ans = ask_ledger(
+        with st.spinner(f"Analyzing your ledger records with {model_name}..."):
+            ans_text, ans_source = ask_ledger(
                 question=user_query,
                 ledger_df=df_all,
                 api_key=api_key,
                 model_name=model_name,
             )
-            st.info(f"💡 **Hisaab AI:** {ans}")
+            if ans_source == "AI answer":
+                st.success(f"🤖 **AI answer:**\n\n{ans_text}")
+            elif ans_source == "Calculated from your ledger (offline, not AI)":
+                st.info(f"📊 **Calculated from your ledger (offline, not AI):**\n\n{ans_text}")
+            elif ans_source == "Model Error":
+                st.error(f"❌ **Model Error:**\n\n{ans_text}")
+            else:
+                st.warning(f"ℹ️ {ans_text}")

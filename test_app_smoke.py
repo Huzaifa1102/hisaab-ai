@@ -26,6 +26,12 @@ def test_app():
     assert not at2.exception, f"Exception occurred during populated app render: {at2.exception}"
     print("Step 3 passed: Clean render with 0 exceptions on populated DB.")
 
+    print("Step 4: Testing Voice Tab safety switch (hiding Voice Khata)...")
+    voice_cb = [c for c in at2.sidebar.checkbox if c.label == "Show Voice Khata tab"][0]
+    voice_cb.uncheck().run()
+    assert not at2.exception, f"Exception occurred with voice tab hidden: {at2.exception}"
+    print("Step 4 passed: Clean render with Voice Khata tab hidden.")
+
     print("ALL STREAMLIT SMOKE TESTS PASSED!")
 
 if __name__ == "__main__":
