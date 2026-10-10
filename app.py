@@ -466,18 +466,30 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
                     norm = normalize_entry(r, fallback_date=raw_result.document_date)
                     if norm:
                         valid_rows.append(norm)
-                if valid_rows:
-                    added_count = add_transactions(
-                        valid_rows,
-                        source=filename,
-                        doc_type=doc_type,
-                    )
-                    st.toast(f"Successfully saved {added_count} entries to ledger!", icon="✅")
-                else:
-                    st.toast("No valid rows to save (all amounts were 0 or unreadable).", icon="⚠️")
+                skipped = len(edited_rows) - len(valid_rows)
 
-                remove_pending_doc(doc_item)
-                st.rerun()
+                if not valid_rows:
+                    # Keep the document in the queue so the user can fix amounts or discard it
+                    st.warning(
+                        "Nothing saved: no row has a valid amount above 0. "
+                        "Fix the amounts in the table, or click 'Discard'."
+                    )
+                else:
+                    try:
+                        added_count = add_transactions(
+                            valid_rows,
+                            source=filename,
+                            doc_type=doc_type,
+                        )
+                    except Exception as save_err:
+                        st.error(f"Could not save to the ledger: {ui_error_message(save_err)}")
+                    else:
+                        msg = f"Successfully saved {added_count} entries to ledger!"
+                        if skipped:
+                            msg += f" ({skipped} row(s) skipped: amount empty or 0)"
+                        st.toast(msg, icon="✅")
+                        remove_pending_doc(doc_item)
+                        st.rerun()
 
         with col_btn2:
             if st.button("🗑️ Discard", key=f"discard_{uid}", type="secondary"):

@@ -236,6 +236,12 @@ def normalize_entry(entry: Any, fallback_date: Optional[str] = None) -> Optional
     if amount is None or amount <= 0:
         return None
 
+    # Blank cells from the review table arrive as NaN; treat them as empty, not as the text "nan"
+    for text_field in ("party", "note", "txn_date", "due_date", "type", "category", "status"):
+        val = data.get(text_field)
+        if isinstance(val, float) and pd.isna(val):
+            data[text_field] = None
+
     # Party normalization
     party = str(data.get("party") or "").strip()
     if not party:
