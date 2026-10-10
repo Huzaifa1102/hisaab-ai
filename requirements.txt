@@ -7,3 +7,4 @@ python-dotenv>=1.0
 plotly>=5.19
 pillow>=10.2
 openpyxl>=3.1
+reportlab>=4.0  # only used by generate_summary_pdf.py
