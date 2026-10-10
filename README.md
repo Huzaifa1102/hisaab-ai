@@ -1,6 +1,6 @@
 # 📒 Hisaab AI (حساب) — AI Bookkeeper for Pakistani Kiryana Stores
 
-> **Automated Visual & Voice Ledger for Pakistan's 2+ Million Retail Shopkeepers**  
+> **Photo and voice bookkeeping for Pakistan's kiryana shops: it reads the paper khata they already keep.**  
 > Built for the **BUILD WITH AI Hackathon 2026**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -13,16 +13,33 @@
 
 ## 📌 Problem Statement
 
-In Pakistan, over **2 million small neighborhood stores (kiryana shops)** form the backbone of the retail economy. Over **80% of daily transactions** occur on credit (**Udhaar / ادھار**) recorded manually in paper notebooks (**Khata / کھاتہ**).
+Pakistan has an estimated **700,000–900,000 kiryana and grocery shops**, which handle most of the country's grocery buying, and many still run on pen and paper ([Dawn Aurora](https://aurora.dawn.com/news/1141706), [TechCrunch 2022](https://techcrunch.com/2022/09/06/snappretail-helps-pakistans-kiryanas-compete-against-supermarkets)). Customer credit (**udhaar / ادھار**) is written by hand in a register (**khata / کھاتہ**).
 
-### Real-World Challenges:
-1. **Lost & Damaged Registers:** Spilled tea, torn pages, and lost khata notebooks lead to unrecoverable debts (averaging Rs 30,000–80,000 in bad credit per store).
-2. **Disputed Amounts:** Illegible handwriting and messy math create disputes between shopkeepers and neighborhood customers.
-3. **Overlooked Utility Deadlines:** Late payment surcharges on commercial power bills (IESCO, LESCO, K-Electric) erode thin 5–8% retail margins.
-4. **Digitization Barrier:** Traditional accounting software (QuickBooks, Excel) fails because shopkeepers don't type in English while managing counter rush.
+### Real-world challenges
+1. **Lost and damaged registers:** a torn or lost khata means credit that can't be recovered.
+2. **Disputed amounts:** unclear handwriting and hand-added totals cause arguments with regular customers.
+3. **Missed bill deadlines:** late-payment surcharges on IESCO, LESCO, K-Electric, SNGPL and PTCL bills eat into thin margins.
+4. **The typing barrier:** existing khata apps still need every entry typed, in the middle of a counter rush.
 
 **Hisaab AI solves this with zero typing:**
 > *Snap a photo of your paper register, invoice, or utility bill — or simply speak a voice note in Urdu — and get an auditable, verified digital ledger.*
+
+---
+
+## 🥇 Why Hisaab AI is different
+
+Existing khata apps in Pakistan (Udhaar Book, DigiKhata, Easy Khata) digitise the ledger but still need every entry **typed**. Hisaab AI removes the typing:
+
+| | Hisaab AI | Pakistani khata apps checked |
+|---|---|---|
+| Reads a photo of the handwritten khata page | ✓ | Not found |
+| Scans IESCO / SNGPL / PTCL bills and warns before the due date | ✓ | Not found |
+| Urdu / Roman Urdu voice entry | ✓ | Not found |
+| Answers questions about the ledger in Urdu or English | ✓ | Not found |
+| AI-written, polite WhatsApp reminders in 3 scripts | ✓ | Fixed templates |
+| Never guesses an amount; human review before saving | ✓ | n/a |
+
+Competitors are ahead on mobile apps, scale, payments and inventory. See the full, sourced [competitive analysis](docs/COMPETITIVE_ANALYSIS.md).
 
 ---
 
@@ -35,10 +52,10 @@ In Pakistan, over **2 million small neighborhood stores (kiryana shops)** form t
   - Utility bills: **IESCO, LESCO, SNGPL, PTCL** (extracts due date, amount payable, and billing party).
   - Wholesale supplier invoices & retail receipts (extracts line items, quantities, and rates).
 - **Core Principle: AI Proposes, Human Confirms:** A dynamic review editor allows instant number verification before saving.
-- **Zero Hallucination Guarantee:** The model drops unreadable numbers with clear warnings rather than guessing amounts.
+- **No guessed amounts:** unreadable numbers are dropped with a clear warning instead of being guessed, and nothing is saved until a person reviews it.
 
 ### 2. 🎙️ Voice Khata (Speech-to-Ledger)
-- **Ultra-Fast Audio Transcription:** Powered by **Groq Whisper-large-v3** (~300ms latency).
+- **Fast audio transcription:** powered by **Groq Whisper-large-v3**.
 - **Colloquial Pakistani Vocabulary:** Custom phonetic prompting recognizing *"udhaar"*, *"wasool"*, *"jama"*, *"chawal"*, *"atta"*, *"cheeni"*, *"rupay"*.
 - **Natural Language Parsing:** Converts phrases like *"Ahmed ne 500 rupay ka aata udhaar liya"* into structured credit ledger entries.
 
@@ -217,7 +234,7 @@ python test_live_images.py
 
 - **AI Integration Depth:** Dual-model pipeline combining Gemini 3.8 Flash multimodal structured vision and Groq Whisper audio transcription with strict Pydantic schemas.
 - **Problem-Solving Quality:** Tackles the critical root cause of retail debt in informal emerging economies with a strict human-in-the-loop review safeguard.
-- **Industrial Impact:** Applicable to over 2 million kiryana stores in Pakistan and millions of mom-and-pop shops across South Asia.
+- **Industrial Impact:** Applicable to an estimated 700,000–900,000 kiryana and grocery shops in Pakistan, and to similar small shops across South Asia.
 - **Creativity & SDG Impact:**
   - **SDG 8 (Decent Work and Economic Growth):** Enhances financial resilience for micro-entrepreneurs.
   - **SDG 9 (Industry, Innovation, and Infrastructure):** Digitizes informal paper-based supply chain accounting.
