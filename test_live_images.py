@@ -191,9 +191,15 @@ def run_benchmark():
             consistent = "FAILED" if not succ else "PARTIAL"
         print(f"{fname:<26} | {succ_str:<15} | {avg_lat:<12} | {consistent}")
     print("=" * 80)
-    print("[*] Completed. Real API results from the first run of each image have been")
-    print("    saved into demo_cache/ for offline demo mode verification.")
+    cached = [f for f, runs in overall_results.items() if any(r.get("success") for r in runs)]
+    failed = [f for f in overall_results if f not in cached]
+    if cached:
+        print(f"[*] Real API results saved to demo_cache/ for: {', '.join(cached)}")
+    if failed:
+        print(f"[!] NOT cached (all runs failed, existing cache file left unchanged): {', '.join(failed)}")
     print("=" * 80)
+    if not cached:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
