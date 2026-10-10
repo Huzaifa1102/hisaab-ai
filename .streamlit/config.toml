@@ -1,8 +1,9 @@
 [theme]
-primaryColor = "#059669"
-backgroundColor = "#F8FAFC"
+# Ink blue for actions, cool paper background (see the khata identity notes in app.py)
+primaryColor = "#1E3A8A"
+backgroundColor = "#F5F6F8"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#0F172A"
+textColor = "#111827"
 font = "sans serif"
 
 [server]

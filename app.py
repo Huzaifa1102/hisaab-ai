@@ -157,155 +157,161 @@ def ui_error_message(err: Exception) -> str:
     return f"Something went wrong ({type(err).__name__}). Please try again."
 
 # ==============================================================================
-# PROFESSIONAL FINTECH DESIGN SYSTEM (CSS)
+# VISUAL IDENTITY: the khata register
+# The header is the cloth-bound cover of a "lal khata" (maroon binding, gold foil
+# frame, Nastaliq title). Everything else stays quiet: ruled ledger rows for the
+# key numbers, ink-blue actions, tabular figures for every rupee amount.
+# Fonts fall back to system faces when offline.
 # ==============================================================================
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Mukta:wght@400;500;600;700&family=Noto+Nastaliq+Urdu:wght@500;700&display=swap');
 
-    html, body, [class*="css"] {
-        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    :root {
+        --khata-binding: #6E1423;
+        --khata-binding-deep: #4A0D18;
+        --khata-foil: #D4AF37;
+        --khata-foil-soft: rgba(212, 175, 55, 0.45);
+        --khata-cover-text: #F8EBD0;
+        --ink: #1E3A8A;
+        --margin-rule: #C8323C;
+        --paper-rule: #E9EEF5;
+        --text: #111827;
+        --muted: #5B6472;
+        --line: #E3E6EA;
     }
 
-    /* Top App Header Banner */
-    .hisaab-banner {
-        background: linear-gradient(135deg, #064E3B 0%, #047857 50%, #059669 100%);
-        border-radius: 12px;
-        padding: 20px 24px;
-        color: #FFFFFF;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 12px rgba(4, 120, 87, 0.15);
+    .stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea,
+    .stApp button, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5 {
+        font-family: 'Mukta', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    /* Header: the register cover */
+    .khata-cover {
+        position: relative;
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        gap: 12px;
+        gap: 16px;
+        margin-bottom: 24px;
+        padding: 22px 28px 22px 46px;
+        border-radius: 6px;
+        color: var(--khata-cover-text);
+        background-color: var(--khata-binding);
+        /* faint cloth weave */
+        background-image:
+            repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 2px, transparent 2px 5px),
+            repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.05) 0 2px, transparent 2px 5px);
+    }
+    /* spine with gold stitching */
+    .khata-cover::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 22px;
+        border-radius: 6px 0 0 6px;
+        background: var(--khata-binding-deep);
+        border-right: 2px dashed var(--khata-foil-soft);
+    }
+    /* gold foil frame */
+    .khata-cover::after {
+        content: "";
+        position: absolute;
+        inset: 8px 8px 8px 30px;
+        border: 1px solid var(--khata-foil-soft);
+        border-radius: 3px;
+        pointer-events: none;
+    }
+    .khata-brand {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        position: relative;
+        z-index: 1;
+    }
+    .khata-urdu {
+        font-family: 'Noto Nastaliq Urdu', 'Urdu Typesetting', 'Jameel Noori Nastaleeq', serif;
+        font-size: 2.5rem;
+        font-weight: 700;
+        line-height: 1.7;
+        color: var(--khata-foil);
+    }
+    .khata-brandname {
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--khata-foil);
     }
     .hisaab-title {
         font-size: 1.6rem;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        margin: 0;
-        color: #FFFFFF;
+        font-weight: 700;
+        line-height: 1.2;
+        color: #FFF8E7;
     }
     .hisaab-subtitle {
-        font-size: 0.92rem;
-        color: #A7F3D0;
-        margin-top: 4px;
+        font-size: 0.95rem;
+        color: var(--khata-cover-text);
+        opacity: 0.85;
+        margin-top: 2px;
     }
     .hisaab-status-pill {
-        background: rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        padding: 6px 14px;
+        position: relative;
+        z-index: 1;
+        padding: 5px 14px;
+        border: 1px solid var(--khata-foil-soft);
         border-radius: 9999px;
-        font-size: 0.85rem;
+        background: rgba(0, 0, 0, 0.2);
+        font-size: 0.9rem;
         font-weight: 600;
+        color: var(--khata-cover-text);
     }
 
-    /* Card Containers */
-    .hisaab-card {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-        margin-bottom: 16px;
-    }
-    .hisaab-card:hover {
-        box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
-    }
-
-    /* KPI Metric Cards */
+    /* Key numbers: rows on ruled khata paper with a red double margin rule */
     .kpi-container {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03);
-        border-top: 4px solid #059669;
+        background-color: #FFFFFF;
+        background-image: repeating-linear-gradient(to bottom, transparent 0 27px, var(--paper-rule) 27px 28px);
+        border: 1px solid var(--line);
+        border-left: 5px double var(--margin-rule);
+        border-radius: 4px;
+        padding: 12px 16px 12px 18px;
     }
     .kpi-label {
-        color: #64748B;
-        font-size: 0.82rem;
+        color: var(--muted);
+        font-size: 0.9rem;
         font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 4px;
+        line-height: 1.3;
+        margin-bottom: 2px;
     }
     .kpi-value {
-        color: #0F172A;
-        font-size: 1.55rem;
-        font-weight: 800;
-        letter-spacing: -0.5px;
+        font-size: 1.65rem;
+        font-weight: 700;
+        line-height: 1.25;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
     }
 
-    /* Transaction Type Badges */
-    .badge-udhaar {
-        background-color: #FEF3C7;
-        color: #92400E;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-    .badge-jama {
-        background-color: #D1FAE5;
-        color: #065F46;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-    .badge-expense {
-        background-color: #FEE2E2;
-        color: #991B1B;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-    .badge-cash {
-        background-color: #DBEAFE;
-        color: #1E40AF;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-
-    /* Tabs Styling */
+    /* Tabs: register index, not pills */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 6px;
-        background-color: #F1F5F9;
-        padding: 6px;
-        border-radius: 10px;
+        gap: 4px;
+        border-bottom: 1px solid var(--line);
     }
     .stTabs [data-baseweb="tab"] {
-        padding: 8px 18px;
-        border-radius: 8px;
+        padding: 8px 14px;
         font-weight: 600;
-        font-size: 0.95rem;
-        color: #475569;
-        transition: all 0.2s ease;
+        font-size: 1rem;
+        color: var(--muted);
     }
     .stTabs [aria-selected="true"] {
-        background-color: #FFFFFF !important;
-        color: #047857 !important;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+        color: var(--ink) !important;
     }
 
-    /* Responsive Mobile Adjustments */
     @media (max-width: 768px) {
-        .hisaab-banner {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-        .kpi-value {
-            font-size: 1.3rem;
-        }
+        .khata-cover { padding: 18px 18px 18px 40px; }
+        .khata-urdu { font-size: 2rem; }
+        .hisaab-title { font-size: 1.3rem; }
+        .kpi-value { font-size: 1.35rem; }
     }
     </style>
     """,
@@ -398,14 +404,16 @@ status_label = "⚡ Offline Demo Mode" if offline_mode else f"🟢 Live AI Engin
 
 st.markdown(
     f"""
-    <div class="hisaab-banner">
-        <div>
-            <div class="hisaab-title">📒 Hisaab AI — {html.escape(shop_name)}</div>
-            <div class="hisaab-subtitle">Digital Khata & Automatic Bookkeeper • {today_str}</div>
+    <div class="khata-cover" role="banner">
+        <div class="khata-brand">
+            <span class="khata-urdu" lang="ur" dir="rtl">حساب</span>
+            <div>
+                <div class="khata-brandname">Hisaab AI</div>
+                <div class="hisaab-title">{html.escape(shop_name)}</div>
+                <div class="hisaab-subtitle">Digital khata for {today_str}</div>
+            </div>
         </div>
-        <div class="hisaab-status-pill">
-            {status_label}
-        </div>
+        <div class="hisaab-status-pill">{status_label}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1078,7 +1086,7 @@ with tab_dashboard:
     with mc1:
         st.markdown(
             f"""
-            <div class="kpi-container" style="border-top-color: #DC2626;">
+            <div class="kpi-container">
                 <div class="kpi-label">Expenses this month (incl. unpaid bills)</div>
                 <div class="kpi-value" style="color: #991B1B;">Rs {month_expenses:,.0f}</div>
             </div>
@@ -1088,7 +1096,7 @@ with tab_dashboard:
     with mc2:
         st.markdown(
             f"""
-            <div class="kpi-container" style="border-top-color: #D97706;">
+            <div class="kpi-container">
                 <div class="kpi-label">Outstanding udhaar</div>
                 <div class="kpi-value" style="color: #B45309;">Rs {total_udhaar:,.0f}</div>
             </div>
@@ -1098,7 +1106,7 @@ with tab_dashboard:
     with mc3:
         st.markdown(
             f"""
-            <div class="kpi-container" style="border-top-color: #EF4444;">
+            <div class="kpi-container">
                 <div class="kpi-label">Unpaid bills</div>
                 <div class="kpi-value" style="color: #7F1D1D;">Rs {unpaid_bills_total:,.0f}</div>
             </div>
@@ -1109,7 +1117,7 @@ with tab_dashboard:
         # Strictly labeled as specified
         st.markdown(
             f"""
-            <div class="kpi-container" style="border-top-color: #059669;">
+            <div class="kpi-container">
                 <div class="kpi-label">Recorded cash sales this month</div>
                 <div class="kpi-value" style="color: #047857;">Rs {month_cash_sales:,.0f}</div>
             </div>
