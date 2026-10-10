@@ -159,7 +159,7 @@ Open **`http://localhost:8501`** in your browser.
 ## 🧪 Testing & Demo Walkthrough
 
 ### 1. Load Realistic Demo Ledger
-1. Click **"📥 Load Demo Ledger"** in the sidebar.
+1. Tick **"Replace current ledger with demo data"**, then click **"📥 Load Demo Ledger"** in the sidebar (this replaces the whole ledger).
 2. The database instantly populates with 22 realistic transactions:
    - Wholesale inventory purchases (Metro Cash & Carry, Al-Fatah Wholesale)
    - Rent & shop assistant salary
@@ -200,6 +200,15 @@ python test_app_smoke.py
 
 # Test voice extraction mocking and demo cache validity:
 python test_voice_and_offline.py
+
+# Test error handling, offline fallback, save validation and retry rules (mocked, no API calls):
+python test_hardening.py
+```
+These tests use a temporary database, so they never touch your real `hisaab.db`.
+
+To rebuild `demo_cache/` from real scans (uses your Gemini key, 3 calls per image):
+```bash
+python test_live_images.py
 ```
 
 ---

@@ -1,0 +1,189 @@
+"""
+test_hardening.py — Regression tests for the demo-hardening fixes. No live API calls:
+Gemini is mocked and the API keys are blanked.
+1. Smart Scan errors stay visible after the rerun (missing key, network failure, offline cache miss).
+2. "Use saved result" fallback works and shows the offline banner; nothing is cached automatically.
+3. Saving a review table with no valid rows keeps the document in the queue.
+4. Friendly error messages (no raw API text) and retry rules (one retry, none for bad key/model).
+5. Ask / reminder fallbacks keep honest labels and explain why the AI was not used.
+6. Blank review-table cells (NaN) never become a party named "Nan".
+"""
+
+import os
+import tempfile
+
+# Throwaway database + no keys, before importing app modules
+os.environ["HISAAB_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test_hisaab.db")
+os.environ["GEMINI_API_KEY"] = ""
+os.environ["GROQ_API_KEY"] = ""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+from streamlit.testing.v1 import AppTest
+
+import core
+from core import AIServiceError, ExtractionResult, ask_ledger, draft_reminder, friendly_api_error, normalize_entry
+from db import get_all_transactions, reset_db, seed_demo_data
+
+ROOT = Path(__file__).resolve().parent
+APP = str(ROOT / "app.py")
+BILL = (ROOT / "test_images" / "electricity_bill.png").read_bytes()
+OFFLINE = "Calculated from your ledger (offline, not AI)"
+TEMPLATE = "Template message (AI unavailable)"
+
+
+def _scan(name: str, offline: bool = False) -> AppTest:
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    if offline:
+        [t for t in at.sidebar.toggle if "Offline" in t.label][0].set_value(True).run()
+    at.file_uploader[0].set_value((name, BILL, "image/png")).run()
+    [b for b in at.button if "Extract with AI" in b.label][0].click().run()
+    assert not at.exception, at.exception
+    return at
+
+
+def _errors(at: AppTest):
+    return [e.value for e in at.error]
+
+
+def _use_saved_buttons(at: AppTest):
+    return [b for b in at.button if b.label.startswith("Use saved result")]
+
+
+def test_scan_errors_visible():
+    print("Testing Smart Scan error visibility...")
+    reset_db()
+    at = _scan("electricity_bill.png")
+    assert any("API key is missing" in e for e in _errors(at)), _errors(at)
+    assert len(at.session_state["pending_docs"]) == 0
+
+    at = _scan("not_cached_photo.png", offline=True)
+    assert any("no saved result" in e for e in _errors(at)), _errors(at)
+    assert len(at.session_state["pending_docs"]) == 0
+    print("Passed: scan errors stay on screen.")
+
+
+def test_cache_fallback_is_explicit():
+    print("Testing offline cache fallback button...")
+    with patch.object(core, "extract_from_image", side_effect=AIServiceError("Could not reach Gemini.")):
+        at = _scan("electricity_bill.png")
+        assert len(at.session_state["pending_docs"]) == 0, "cache must not load without a click"
+        buttons = _use_saved_buttons(at)
+        assert buttons, "expected a 'Use saved result' button"
+        buttons[0].click().run()
+        assert not at.exception, at.exception
+        docs = at.session_state["pending_docs"]
+        assert len(docs) == 1 and docs[0]["is_offline"] is True
+        assert any("Offline demo mode" in w.value for w in at.warning), "offline banner missing"
+
+        at = _scan("no_cache_for_this.png")
+        assert not _use_saved_buttons(at)
+
+    with patch.object(core, "extract_from_image", side_effect=KeyError("raw internal detail")):
+        at = _scan("x.png")
+        assert not any("raw internal detail" in e for e in _errors(at)), _errors(at)
+        assert any("Something went wrong" in e for e in _errors(at))
+    print("Passed: cache only loads on an explicit click, with the banner.")
+
+
+def test_save_empty_table_keeps_doc():
+    print("Testing save of an empty review table...")
+    reset_db()
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pending_docs"] = [{
+        "uid": "t1",
+        "result": ExtractionResult(doc_type="other", summary="A photo of a cat", confidence=0.4, entries=[]),
+        "entries": [], "img_bytes": None, "filename": "cat.jpg", "doc_type": "other", "is_offline": False,
+    }]
+    at.run()
+    [b for b in at.button if b.label == "💾 Save to Ledger"][0].click().run()
+    assert not at.exception, at.exception
+    assert len(at.session_state["pending_docs"]) == 1, "document must stay in the queue"
+    assert any("Nothing saved" in w.value for w in at.warning)
+    assert get_all_transactions().empty
+    print("Passed: empty table is not saved and the document is kept.")
+
+
+def test_friendly_errors_and_retry():
+    print("Testing friendly error messages and retry rules...")
+    cases = {
+        "getaddrinfo failed": "internet connection",
+        "404 NOT_FOUND models/gemini-x is not found": "change the 'Gemini Model' field in the sidebar",
+        "400 API_KEY_INVALID API key not valid": "Invalid Gemini API key",
+        "429 RESOURCE_EXHAUSTED": "rate limit",
+        "ReadTimeout: timed out": "45 seconds",
+    }
+    for raw, expected in cases.items():
+        msg = friendly_api_error(RuntimeError(raw), "gemini-x")
+        assert expected in msg, (raw, msg)
+        assert raw not in msg, f"raw API text leaked: {msg}"
+
+    def run_with(err):
+        client = MagicMock()
+        client.models.generate_content.side_effect = err
+        with patch("google.genai.Client", return_value=client), patch("core.time.sleep"):
+            try:
+                core.extract_from_image(BILL, api_key="test-key", model_name="gemini-x")
+            except AIServiceError as e:
+                return client.models.generate_content.call_count, str(e)
+        raise AssertionError("expected AIServiceError")
+
+    calls, msg = run_with(RuntimeError("404 NOT_FOUND"))
+    assert calls == 1, f"unknown model must not be retried (calls={calls})"
+    assert "gemini-x" in msg and "sidebar" in msg
+    calls, _ = run_with(RuntimeError("API key not valid"))
+    assert calls == 1, f"bad key must not be retried (calls={calls})"
+    calls, _ = run_with(ConnectionError("network down"))
+    assert calls == 2, f"network failure must be retried once (calls={calls})"
+
+    try:
+        core.extract_from_image(b"not an image", api_key="test-key")
+        raise AssertionError("expected AIServiceError")
+    except AIServiceError as e:
+        assert "could not be opened as an image" in str(e)
+    print("Passed: friendly messages, one retry, no retry for bad key/model.")
+
+
+def test_honest_fallback_labels():
+    print("Testing Ask / reminder fallback labels...")
+    seed_demo_data()
+    df = get_all_transactions()
+    client = MagicMock()
+    client.models.generate_content.side_effect = RuntimeError("404 NOT_FOUND")
+    with patch("google.genai.Client", return_value=client), patch("core.time.sleep"):
+        text, label, notice = ask_ledger("who owes me the most?", df, api_key="test-key", model_name="gemini-x")
+        assert label == OFFLINE and "Faisal Khan" in text
+        assert notice and "gemini-x" in notice
+
+        text, label, notice = ask_ledger("tell me a joke", df, api_key="test-key", model_name="gemini-x")
+        assert label == "Error" and "NOT_FOUND" not in text
+
+        text, label, notice = draft_reminder("Shop", "Hamza", 1450, "English", api_key="test-key", model_name="gemini-x")
+        assert label == TEMPLATE and "Hamza" in text and notice
+
+    text, label, notice = draft_reminder("Shop", "Hamza", 1450, "English", api_key="")
+    assert label == TEMPLATE
+    reset_db()
+    print("Passed: offline/template labels with a reason.")
+
+
+def test_nan_cells():
+    print("Testing NaN cells from the review table...")
+    row = {"txn_date": float("nan"), "party": float("nan"), "type": "expense", "amount": 100.0,
+           "category": float("nan"), "status": float("nan"), "due_date": float("nan"), "note": float("nan")}
+    norm = normalize_entry(row, fallback_date="2026-10-10")
+    assert norm["party"] == "Unknown" and norm["note"] == "" and norm["txn_date"] == "2026-10-10"
+    assert normalize_entry({"party": "Ali", "amount": float("nan")}) is None
+    print("Passed: NaN cells handled.")
+
+
+if __name__ == "__main__":
+    test_scan_errors_visible()
+    test_cache_fallback_is_explicit()
+    test_save_empty_table_keeps_doc()
+    test_friendly_errors_and_retry()
+    test_honest_fallback_labels()
+    test_nan_cells()
+    print("ALL HARDENING TESTS PASSED!")
