@@ -12,6 +12,7 @@ Features:
 
 import os
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -80,10 +81,48 @@ if "drafted_reminders" not in st.session_state:
     st.session_state.drafted_reminders = {}
 if "voice_transcript" not in st.session_state:
     st.session_state.voice_transcript = ""
+if "scan_errors" not in st.session_state:
+    st.session_state.scan_errors = []
 
 # Demo cache directory
 CACHE_DIR = Path(__file__).parent / "demo_cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+
+def new_pending_doc(res: ExtractionResult, entries: List[Dict[str, Any]], img_bytes: Optional[bytes],
+                    filename: str, is_offline: bool) -> Dict[str, Any]:
+    """Builds a review-queue item. 'uid' keeps widget keys stable when other items are removed."""
+    return {
+        "uid": uuid.uuid4().hex,
+        "result": res,
+        "entries": entries,
+        "img_bytes": img_bytes,
+        "filename": filename,
+        "doc_type": res.doc_type,
+        "is_offline": is_offline,
+    }
+
+
+def remove_pending_doc(doc_item: Dict[str, Any]) -> None:
+    st.session_state.pending_docs = [d for d in st.session_state.pending_docs if d is not doc_item]
+
+
+def load_cached_doc(cache_file: Path, img_bytes: bytes, filename: str) -> Dict[str, Any]:
+    """Loads a saved demo_cache result as an offline review-queue item (raises if the file is invalid)."""
+    res = ExtractionResult.model_validate_json(cache_file.read_text(encoding="utf-8"))
+    entries = [normalize_entry(e, fallback_date=res.document_date) for e in res.entries]
+    return new_pending_doc(res, [e for e in entries if e], img_bytes, filename, is_offline=True)
+
+
+def add_scan_error(filename: str, message: str, cache_file: Optional[Path] = None,
+                   img_bytes: Optional[bytes] = None) -> None:
+    st.session_state.scan_errors.append({
+        "id": uuid.uuid4().hex,
+        "filename": filename,
+        "message": message,
+        "cache_file": str(cache_file) if cache_file else None,
+        "img_bytes": img_bytes,
+    })
 
 
 def ui_error_message(err: Exception) -> str:
@@ -347,6 +386,7 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
     filename: str = doc_item.get("filename", "Document")
     doc_type: str = doc_item.get("doc_type", "receipt")
     is_offline: bool = doc_item.get("is_offline", False)
+    uid: str = doc_item.get("uid") or f"{doc_idx}_{filename}"
 
     st.markdown(f"### 📋 Review: **{filename}**")
 
@@ -397,7 +437,7 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
 
         edited_df = st.data_editor(
             df_entries,
-            key=f"editor_{doc_idx}_{filename}",
+            key=f"editor_{uid}",
             num_rows="dynamic",
             column_config={
                 "type": st.column_config.SelectboxColumn("Type", options=ALLOWED_TYPES, required=True),
@@ -419,14 +459,13 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
 
         col_btn1, col_btn2 = st.columns([1, 1])
         with col_btn1:
-            if st.button("💾 Save to Ledger", key=f"save_{doc_idx}_{filename}", type="primary"):
+            if st.button("💾 Save to Ledger", key=f"save_{uid}", type="primary"):
                 edited_rows = edited_df.to_dict(orient="records")
                 valid_rows = []
                 for r in edited_rows:
                     norm = normalize_entry(r, fallback_date=raw_result.document_date)
                     if norm:
                         valid_rows.append(norm)
-
                 if valid_rows:
                     added_count = add_transactions(
                         valid_rows,
@@ -437,12 +476,12 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
                 else:
                     st.toast("No valid rows to save (all amounts were 0 or unreadable).", icon="⚠️")
 
-                st.session_state.pending_docs.pop(doc_idx)
+                remove_pending_doc(doc_item)
                 st.rerun()
 
         with col_btn2:
-            if st.button("🗑️ Discard", key=f"discard_{doc_idx}_{filename}", type="secondary"):
-                st.session_state.pending_docs.pop(doc_idx)
+            if st.button("🗑️ Discard", key=f"discard_{uid}", type="secondary"):
+                remove_pending_doc(doc_item)
                 st.toast(f"Discarded {filename}.", icon="ℹ️")
                 st.rerun()
 
@@ -494,36 +533,31 @@ with tab_scan:
 
     has_files = bool(uploaded_files)
     if st.button("🚀 Extract with AI", disabled=not has_files, type="primary"):
+        # Messages are kept in session_state so they survive the st.rerun() below
+        st.session_state.scan_errors = []
         for f in uploaded_files:
             file_bytes = f.getvalue()
-            filename = f.name
-            base_name = Path(filename).stem
-            cache_file = CACHE_DIR / f"{base_name}.json"
+            is_camera = f is camera_pic
+            # A camera photo's file name does not identify the document, so it never uses or writes the demo cache
+            filename = f"Camera photo ({datetime.now().strftime('%H:%M:%S')})" if is_camera else f.name
+            base_name = Path(f.name).stem
+            cache_file = None if is_camera else CACHE_DIR / f"{base_name}.json"
 
             if offline_mode:
-                if cache_file.exists():
+                if cache_file is None:
+                    add_scan_error(filename, "Offline demo mode has no saved results for camera photos. "
+                                             "Upload a saved test image, or turn off offline mode.")
+                elif cache_file.exists():
                     try:
-                        raw_json = cache_file.read_text(encoding="utf-8")
-                        res = ExtractionResult.model_validate_json(raw_json)
-                        normalized_list = []
-                        for entry in res.entries:
-                            n = normalize_entry(entry, fallback_date=res.document_date)
-                            if n:
-                                normalized_list.append(n)
-                        st.session_state.pending_docs.append({
-                            "result": res,
-                            "entries": normalized_list,
-                            "img_bytes": file_bytes,
-                            "filename": filename,
-                            "doc_type": res.doc_type,
-                            "is_offline": True,
-                        })
+                        st.session_state.pending_docs.append(load_cached_doc(cache_file, file_bytes, filename))
                     except Exception as parse_err:
-                        st.error(f"Failed parsing saved offline cache for '{filename}': {parse_err}")
+                        add_scan_error(filename, f"The saved result `demo_cache/{base_name}.json` could not be read "
+                                                 f"({type(parse_err).__name__}).")
                 else:
-                    st.error(
-                        f"Offline cache not found for '{filename}'. Expected file at `demo_cache/{base_name}.json`. "
-                        "Turn off offline mode or ensure the cache file exists."
+                    add_scan_error(
+                        filename,
+                        f"Offline demo mode: no saved result for '{filename}' (expected `demo_cache/{base_name}.json`). "
+                        "Turn off offline mode to scan it live.",
                     )
             else:
                 with st.spinner(f"Reading and analyzing '{filename}' with {model_name}..."):
@@ -533,42 +567,47 @@ with tab_scan:
                             api_key=api_key,
                             model_name=model_name,
                         )
-                        try:
-                            cache_file.write_text(res.model_dump_json(indent=2), encoding="utf-8")
-                        except Exception:
-                            pass
+                        if cache_file is not None:
+                            try:
+                                cache_file.write_text(res.model_dump_json(indent=2), encoding="utf-8")
+                            except Exception:
+                                pass
 
-                        st.session_state.pending_docs.append({
-                            "result": res,
-                            "entries": normalized_list,
-                            "img_bytes": file_bytes,
-                            "filename": filename,
-                            "doc_type": res.doc_type,
-                            "is_offline": False,
-                        })
+                        st.session_state.pending_docs.append(new_pending_doc(
+                            res, normalized_list, file_bytes, filename, is_offline=False,
+                        ))
                     except Exception as err:
-                        st.error(f"Extraction failed for '{filename}': {err}")
-                        if cache_file.exists():
-                            st.info(f"A saved offline extraction is available for '{filename}'.")
-                            if st.button(f"Use saved result for {filename}", key=f"use_cache_{filename}"):
-                                raw_json = cache_file.read_text(encoding="utf-8")
-                                res = ExtractionResult.model_validate_json(raw_json)
-                                normalized_list = [
-                                    normalize_entry(e, fallback_date=res.document_date) for e in res.entries
-                                ]
-                                normalized_list = [e for e in normalized_list if e]
-                                st.session_state.pending_docs.append({
-                                    "result": res,
-                                    "entries": normalized_list,
-                                    "img_bytes": file_bytes,
-                                    "filename": filename,
-                                    "doc_type": res.doc_type,
-                                    "is_offline": True,
-                                })
-                                st.rerun()
+                        add_scan_error(
+                            filename,
+                            f"Extraction failed: {ui_error_message(err)}",
+                            cache_file=cache_file if cache_file is not None and cache_file.exists() else None,
+                            img_bytes=file_bytes,
+                        )
 
         st.session_state.uploader_key += 1
         st.rerun()
+
+    # Scan errors (shown until dismissed or the next extraction)
+    for scan_err in list(st.session_state.scan_errors):
+        st.error(f"**{scan_err['filename']}** — {scan_err['message']}")
+        col_e1, col_e2, _ = st.columns([1.4, 0.6, 2])
+        if scan_err.get("cache_file"):
+            with col_e1:
+                if st.button(f"Use saved result for {scan_err['filename']}", key=f"use_cache_{scan_err['id']}"):
+                    try:
+                        st.session_state.pending_docs.append(
+                            load_cached_doc(Path(scan_err["cache_file"]), scan_err["img_bytes"], scan_err["filename"])
+                        )
+                    except Exception as cache_err:
+                        scan_err["message"] = f"The saved result could not be read ({type(cache_err).__name__})."
+                        scan_err["cache_file"] = None
+                    else:
+                        st.session_state.scan_errors.remove(scan_err)
+                    st.rerun()
+        with col_e2:
+            if st.button("Dismiss", key=f"dismiss_err_{scan_err['id']}"):
+                st.session_state.scan_errors.remove(scan_err)
+                st.rerun()
 
     # Pending Review Queue
     if st.session_state.pending_docs:
@@ -629,15 +668,12 @@ if show_voice_tab and tab_voice is not None:
                             api_key=api_key,
                             model_name=model_name,
                         )
-                        st.session_state.pending_docs.append({
-                            "result": res,
-                            "entries": norm_entries,
-                            "img_bytes": None,
-                            "transcript": edited_transcript,
-                            "filename": f"Voice Note ({datetime.now().strftime('%H:%M:%S')})",
-                            "doc_type": "voice",
-                            "is_offline": False,
-                        })
+                        voice_doc = new_pending_doc(
+                            res, norm_entries, None,
+                            f"Voice Note ({datetime.now().strftime('%H:%M:%S')})", is_offline=False,
+                        )
+                        voice_doc.update(transcript=edited_transcript, doc_type="voice")
+                        st.session_state.pending_docs.append(voice_doc)
                         st.session_state.voice_transcript = ""
                         st.toast("Voice transaction extracted! Review it below or in Smart Scan.", icon="✅")
                         st.rerun()
