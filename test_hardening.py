@@ -250,8 +250,13 @@ def test_demo_polish():
     months = month_fig["data"][0]["x"]
     assert months and all(re.fullmatch(r"[A-Z][a-z]{2} \d{4}", m) for m in months), months
     assert month_fig["layout"]["xaxis"]["type"] == "category"
+    assert any("Expenses this month (incl. unpaid bills)" in m.value for m in at.markdown)
+
+    [b for b in at.button if b.label == "🔍 Ask AI"][0].click().run()
+    assert not at.exception, at.exception
+    assert any("Type a question first" in w.value for w in at.warning), "empty question needs feedback"
     reset_db()
-    print("Passed: developer toolbar hidden, months labelled.")
+    print("Passed: developer toolbar hidden, months labelled, clear KPI label, empty Ask feedback.")
 
 
 def test_nan_cells():

@@ -1079,7 +1079,7 @@ with tab_dashboard:
         st.markdown(
             f"""
             <div class="kpi-container" style="border-top-color: #DC2626;">
-                <div class="kpi-label">Spending this month</div>
+                <div class="kpi-label">Expenses this month (incl. unpaid bills)</div>
                 <div class="kpi-value" style="color: #991B1B;">Rs {month_expenses:,.0f}</div>
             </div>
             """,
@@ -1239,7 +1239,10 @@ with tab_dashboard:
     with col_q2:
         ask_clicked = st.button("🔍 Ask AI", type="primary")
 
-    if ask_clicked and user_query:
+    user_query = (user_query or "").strip()
+    if ask_clicked and not user_query:
+        st.warning("Type a question first, for example: Who owes me the most?")
+    elif ask_clicked:
         with st.spinner(f"Analyzing your ledger records with {model_name}..."):
             ans_text, ans_source, ans_notice = ask_ledger(
                 question=user_query,
