@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # Ensure local modules can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core import clean_model_name, extract_from_image, ExtractionResult
+from core import cache_json, clean_model_name, extract_from_image, ExtractionResult
 
 # Load environment configuration (.env)
 load_dotenv()
@@ -97,7 +97,7 @@ def run_benchmark():
                 # Save the first successful run directly to demo_cache
                 if not any(r["success"] for r in runs_data):
                     try:
-                        cache_dest.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+                        cache_dest.write_text(cache_json(result, GEMINI_MODEL), encoding="utf-8")
                         print(f"      [CACHE SAVED] Live scan stored -> demo_cache/{stem}.json")
                     except Exception as cache_err:
                         print(f"      [CACHE WARNING] Could not write cache: {cache_err}")

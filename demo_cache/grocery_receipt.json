@@ -1,16 +1,16 @@
 {
   "doc_type": "receipt",
-  "summary": "Cash purchase receipt from Packaging Depot for shop packaging supplies.",
+  "summary": "Purchase of polythene bags and wrapping paper rolls from Packaging Depot for Rs 3,300 paid in cash.",
   "document_date": "2026-10-06",
-  "confidence": 0.94,
+  "confidence": 0.98,
   "line_items": [
     {
-      "description": "Polythene carry bags (large) 5kg",
-      "qty": 5.0,
+      "description": "Polythene Bags (Large 5kg pack)",
+      "qty": 1.0,
       "amount": 2500.0
     },
     {
-      "description": "Paper wrapping rolls",
+      "description": "Wrapping Paper Rolls (2 pcs)",
       "qty": 2.0,
       "amount": 800.0
     }
@@ -21,11 +21,14 @@
       "party": "Packaging Depot",
       "type": "expense",
       "amount": 3300.0,
-      "category": "Maintenance",
+      "category": "Stock / Inventory",
       "status": "paid",
       "due_date": null,
-      "note": "Shop packaging bags and rolls"
+      "note": "Wholesale plastic & paper bags purchase paid in cash"
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "provenance": "live_scan",
+  "model": "gemini-3.8-flash",
+  "saved_at": "2026-10-10T19:52:14"
 }

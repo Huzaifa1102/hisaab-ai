@@ -7,6 +7,7 @@ and text generation helpers.
 """
 
 import io
+import os
 import re
 import sys
 import time
@@ -359,6 +360,9 @@ resolve_model_name = clean_model_name
 
 GEMINI_TIMEOUT_MS = 45_000  # ~45 s per attempt; complex handwriting can be slow
 GROQ_TIMEOUT_S = 45.0
+# Hard wall-clock limit per attempt. The SDK timeouts only limit the gap between network
+# reads, and a live test saw one call hang for ~58 minutes, so the app enforces its own stopwatch.
+AI_DEADLINE_S = 50.0
 
 
 class AIServiceError(ValueError):
@@ -367,6 +371,36 @@ class AIServiceError(ValueError):
 
 class _EmptyAIResponse(Exception):
     pass
+
+
+class _DeadlineExceeded(Exception):
+    pass
+
+
+def _run_with_deadline(fn, *args, deadline_s: Optional[float] = None, **kwargs):
+    """
+    Runs fn(*args, **kwargs) in a daemon thread and waits at most deadline_s seconds.
+    On expiry raises _DeadlineExceeded; the stuck call is abandoned (it cannot block exit).
+    """
+    import threading
+
+    limit = AI_DEADLINE_S if deadline_s is None else deadline_s
+    box: Dict[str, Any] = {}
+
+    def runner():
+        try:
+            box["value"] = fn(*args, **kwargs)
+        except BaseException as e:  # re-raised in the caller's thread
+            box["error"] = e
+
+    worker = threading.Thread(target=runner, name="hisaab-ai-call", daemon=True)
+    worker.start()
+    worker.join(limit)
+    if worker.is_alive():
+        raise _DeadlineExceeded(f"no answer within the {limit:.0f} s deadline")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 def _classify_error(err: Exception) -> str:
@@ -379,7 +413,9 @@ def _classify_error(err: Exception) -> str:
     if any(k in s for k in ("api_key_invalid", "api key not valid", "invalid_api_key", "permission_denied",
                             "authentication", "401", "403")):
         return "auth"
-    if any(k in s for k in ("resource_exhausted", "429", "rate limit", "ratelimit", "quota")):
+    if "quota" in s and any(k in s for k in ("exceeded", "exhausted")):
+        return "quota"
+    if any(k in s for k in ("resource_exhausted", "429", "rate limit", "ratelimit")):
         return "rate_limit"
     if any(k in s for k in ("timeout", "timed out", "deadline")):
         return "timeout"
@@ -404,10 +440,18 @@ def friendly_api_error(err: Exception, model_name: str = "", service: str = "Gem
     kind = _classify_error(err)
     if kind == "auth":
         return f"Invalid {service} API key. Please check the key in the sidebar or your .env file."
+    if kind == "quota":
+        return (
+            f"The {service} API key has used up its quota. Enter a different key in the sidebar, "
+            "or turn on 'Offline demo mode'."
+        )
     if kind == "rate_limit":
         return f"{service} rate limit reached. Please wait a minute and try again, or use Offline demo mode."
     if kind == "timeout":
-        return f"{service} did not answer within 45 seconds. Please check the internet connection and try again."
+        return (
+            f"{service} did not answer in time (about {AI_DEADLINE_S:.0f} seconds). "
+            "Check the internet connection and try again, or use the saved result if one is offered."
+        )
     if kind == "network":
         return (
             f"Could not reach {service}. Please check the internet connection, "
@@ -433,9 +477,12 @@ def _gemini_generate(
     schema: Optional[type] = None,
 ) -> Any:
     """
-    Calls Gemini with a ~45 s timeout and one retry for transient failures.
+    Calls Gemini with a ~45 s timeout, a hard ~50 s stopwatch per attempt, and one retry
+    for transient failures.
     Returns the parsed `schema` object, or stripped text when no schema is given.
     Raises AIServiceError with a UI-safe message.
+    Optional: GEMINI_THINKING_LEVEL (minimal | low | medium | high) in .env asks the model
+    to think less, which can make it much faster. Unset = the model's default.
     """
     from google import genai
     from google.genai import types
@@ -443,12 +490,16 @@ def _gemini_generate(
     config_kwargs: Dict[str, Any] = {"temperature": temperature}
     if schema is not None:
         config_kwargs.update(response_mime_type="application/json", response_schema=schema)
+    thinking_level = os.getenv("GEMINI_THINKING_LEVEL", "").strip().upper()
+    if thinking_level:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
 
     last_error: Optional[Exception] = None
     for attempt in range(2):
         try:
             client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
-            resp = client.models.generate_content(
+            resp = _run_with_deadline(
+                client.models.generate_content,
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(**config_kwargs),
@@ -467,13 +518,29 @@ def _gemini_generate(
             return result
         except Exception as e:
             last_error = e
-            # Bad key / unknown model / bad request will not fix themselves: fail fast.
-            if attempt == 0 and _classify_error(e) not in ("auth", "not_found", "bad_request"):
+            # Bad key / unknown model / used-up quota / bad request will not fix themselves: fail fast.
+            if attempt == 0 and _classify_error(e) not in ("auth", "not_found", "quota", "bad_request"):
                 time.sleep(1.5)
                 continue
             break
 
     raise AIServiceError(friendly_api_error(last_error, model_name))
+
+
+def cache_json(result: ExtractionResult, model_name: str) -> str:
+    """
+    JSON for demo_cache/: the extraction result plus where it came from, so the offline
+    banner can say honestly whether it shows a real earlier scan or a hand-made sample.
+    """
+    import json
+
+    data = result.model_dump()
+    data.update(
+        provenance="live_scan",
+        model=clean_model_name(model_name),
+        saved_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
 def extract_from_image(
@@ -742,7 +809,8 @@ def transcribe_audio(
 
         # One retry, same ~45 s budget as the Gemini calls
         client = Groq(api_key=clean_key, timeout=GROQ_TIMEOUT_S, max_retries=1)
-        tr = client.audio.transcriptions.create(
+        tr = _run_with_deadline(
+            client.audio.transcriptions.create,
             file=(filename, audio_bytes),
             model="whisper-large-v3",
             prompt="Kiryana store khata: udhaar, wasool, jama, wapis, chawal, cheeni, atta, ghee, IESCO, SNGPL, rupay",

@@ -1,22 +1,22 @@
 {
   "doc_type": "utility_bill",
-  "summary": "IESCO commercial electricity bill, payable Rs 7,840 by due date.",
+  "summary": "IESCO commercial electricity bill for October 2026 for Madina General Store, total payable Rs 7,840 by 12/10/2026.",
   "document_date": "2026-10-08",
-  "confidence": 0.96,
+  "confidence": 0.98,
   "line_items": [
     {
-      "description": "Commercial Electricity Units (240 kWh)",
+      "description": "Cost of Electricity (240 Units @ commercial slab)",
       "qty": 240.0,
       "amount": 6200.0
     },
     {
-      "description": "Fuel Price Adjustment & Surcharges",
-      "qty": 1.0,
+      "description": "Fuel Price Adjustment (FPA)",
+      "qty": null,
       "amount": 1140.0
     },
     {
-      "description": "GST & TV Fee",
-      "qty": 1.0,
+      "description": "General Sales Tax (GST) & TV License",
+      "qty": null,
       "amount": 500.0
     }
   ],
@@ -29,8 +29,11 @@
       "category": "Electricity",
       "status": "unpaid",
       "due_date": "2026-10-12",
-      "note": "Payable within due date"
+      "note": "Commercial electricity bill for Oct 2026 (Consumer No: 08-1423-098234-U)"
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "provenance": "live_scan",
+  "model": "gemini-3.8-flash",
+  "saved_at": "2026-10-10T17:45:44"
 }

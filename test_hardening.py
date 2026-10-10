@@ -89,6 +89,21 @@ def test_cache_fallback_is_explicit():
     print("Passed: cache only loads on an explicit click, with the banner.")
 
 
+def test_offline_banner_is_honest_about_source():
+    print("Testing that the offline banner says where a saved result came from...")
+    import json
+    for name, expected in (("electricity_bill", "earlier live AI scan"), ("khata_register", "hand-made sample")):
+        provenance = json.loads((ROOT / "demo_cache" / f"{name}.json").read_text(encoding="utf-8")).get("provenance")
+        if provenance not in ("live_scan", "sample"):
+            continue  # cache regenerated in an unexpected format; nothing to check
+        if (provenance == "live_scan") != (expected == "earlier live AI scan"):
+            expected = "earlier live AI scan" if provenance == "live_scan" else "hand-made sample"
+        at = _scan(f"{name}.png", offline=True)
+        banners = [w.value for w in at.warning if "Offline demo mode" in w.value]
+        assert banners and expected in banners[0], banners
+    print("Passed: offline banner names the source (live scan vs sample).")
+
+
 def test_save_empty_table_keeps_doc():
     print("Testing save of an empty review table...")
     reset_db()
@@ -114,7 +129,9 @@ def test_friendly_errors_and_retry():
         "404 NOT_FOUND models/gemini-x is not found": "change the 'Gemini Model' field in the sidebar",
         "400 API_KEY_INVALID API key not valid": "Invalid Gemini API key",
         "429 RESOURCE_EXHAUSTED": "rate limit",
-        "ReadTimeout: timed out": "45 seconds",
+        "ReadTimeout: timed out": "did not answer in time",
+        "504 DEADLINE_EXCEEDED": "did not answer in time",
+        "429 RESOURCE_EXHAUSTED You exceeded your current quota": "used up its quota",
     }
     for raw, expected in cases.items():
         msg = friendly_api_error(RuntimeError(raw), "gemini-x")
@@ -138,6 +155,27 @@ def test_friendly_errors_and_retry():
     assert calls == 1, f"bad key must not be retried (calls={calls})"
     calls, _ = run_with(ConnectionError("network down"))
     assert calls == 2, f"network failure must be retried once (calls={calls})"
+    calls, msg = run_with(RuntimeError("429 RESOURCE_EXHAUSTED You exceeded your current quota"))
+    assert calls == 1 and "quota" in msg, f"used-up quota must not be retried (calls={calls})"
+
+    # Hard stopwatch: a call that hangs is abandoned after the deadline, then retried once
+    import threading
+    import time as _time
+    release = threading.Event()
+    client = MagicMock()
+    client.models.generate_content.side_effect = lambda **kw: release.wait(30)
+    with patch("google.genai.Client", return_value=client), patch("core.time.sleep"), \
+            patch.object(core, "AI_DEADLINE_S", 0.3):
+        started = _time.time()
+        try:
+            core.extract_from_image(BILL, api_key="test-key", model_name="gemini-x")
+            raise AssertionError("expected AIServiceError")
+        except AIServiceError as e:
+            elapsed = _time.time() - started
+            assert "did not answer in time" in str(e), str(e)
+            assert elapsed < 5, f"hung call was not cut off ({elapsed:.1f}s)"
+            assert client.models.generate_content.call_count == 2
+    release.set()
 
     try:
         core.extract_from_image(b"not an image", api_key="test-key")
@@ -272,6 +310,7 @@ def test_nan_cells():
 if __name__ == "__main__":
     test_scan_errors_visible()
     test_cache_fallback_is_explicit()
+    test_offline_banner_is_honest_about_source()
     test_save_empty_table_keeps_doc()
     test_friendly_errors_and_retry()
     test_honest_fallback_labels()

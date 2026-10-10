@@ -11,6 +11,7 @@ Features:
 """
 
 import html
+import json
 import os
 import sys
 import uuid
@@ -44,6 +45,7 @@ from core import (
     AIServiceError,
     ExtractionResult,
     ask_ledger,
+    cache_json,
     clean_model_name,
     draft_reminder,
     extract_from_image,
@@ -113,9 +115,13 @@ def remove_pending_doc(doc_item: Dict[str, Any]) -> None:
 
 def load_cached_doc(cache_file: Path, img_bytes: bytes, filename: str) -> Dict[str, Any]:
     """Loads a saved demo_cache result as an offline review-queue item (raises if the file is invalid)."""
-    res = ExtractionResult.model_validate_json(cache_file.read_text(encoding="utf-8"))
+    raw = json.loads(cache_file.read_text(encoding="utf-8"))
+    res = ExtractionResult.model_validate(raw)
     entries = [normalize_entry(e, fallback_date=res.document_date) for e in res.entries]
-    return new_pending_doc(res, [e for e in entries if e], img_bytes, filename, is_offline=True)
+    doc = new_pending_doc(res, [e for e in entries if e], img_bytes, filename, is_offline=True)
+    doc["cache_provenance"] = raw.get("provenance", "unknown")
+    doc["cache_model"] = raw.get("model")
+    return doc
 
 
 def add_scan_error(filename: str, message: str, cache_file: Optional[Path] = None,
@@ -435,7 +441,14 @@ def render_review_panel(doc_idx: int, doc_item: Dict[str, Any]):
     st.markdown(f"### 📋 Review: **{filename}**")
 
     if is_offline:
-        st.warning("⚡ **Offline demo mode:** showing a saved result for this image.")
+        provenance = doc_item.get("cache_provenance")
+        if provenance == "live_scan":
+            model_note = f" with {doc_item['cache_model']}" if doc_item.get("cache_model") else ""
+            st.warning(f"⚡ **Offline demo mode:** showing a saved result from an earlier live AI scan{model_note}.")
+        elif provenance == "sample":
+            st.warning("⚡ **Offline demo mode:** showing a hand-made sample result for this image, not a live AI scan.")
+        else:
+            st.warning("⚡ **Offline demo mode:** showing a saved result for this image.")
 
     col_preview, col_editor = st.columns([1, 1.4], gap="medium")
 
@@ -629,7 +642,7 @@ with tab_scan:
                         )
                         if cache_file is not None:
                             try:
-                                cache_file.write_text(res.model_dump_json(indent=2), encoding="utf-8")
+                                cache_file.write_text(cache_json(res, model_name), encoding="utf-8")
                             except Exception:
                                 pass
 

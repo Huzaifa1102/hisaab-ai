@@ -32,5 +32,7 @@
       "note": "Grand total for inventory stock invoice #AF-8942"
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "provenance": "sample",
+  "note": "Hand-made sample. Replace with a real scan: python test_live_images.py"
 }
