@@ -197,6 +197,32 @@ def test_api_keys_not_sent_to_browser():
     print("Passed: keys stay hidden and are still used.")
 
 
+def _sidebar_checkbox(at: AppTest, label: str):
+    return [c for c in at.sidebar.checkbox if c.label == label][0]
+
+
+def test_confirm_ticks_reset_after_use():
+    print("Testing that Load Demo / Reset confirmations untick after use...")
+    reset_db()
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    load_btn = [b for b in at.sidebar.button if "Load Demo Ledger" in b.label][0]
+    assert load_btn.disabled, "Load Demo must be disabled until confirmed"
+
+    _sidebar_checkbox(at, "Replace current ledger with demo data").check().run()
+    [b for b in at.sidebar.button if "Load Demo Ledger" in b.label][0].click().run()
+    assert not at.exception, at.exception
+    assert len(get_all_transactions()) == 22
+    assert _sidebar_checkbox(at, "Replace current ledger with demo data").value is False
+    assert [b for b in at.sidebar.button if "Load Demo Ledger" in b.label][0].disabled
+
+    _sidebar_checkbox(at, "I understand this deletes everything").check().run()
+    [b for b in at.sidebar.button if b.label == "Reset Ledger"][0].click().run()
+    assert not at.exception, at.exception
+    assert get_all_transactions().empty
+    assert _sidebar_checkbox(at, "I understand this deletes everything").value is False
+    print("Passed: confirmations untick after use.")
+
+
 def test_nan_cells():
     print("Testing NaN cells from the review table...")
     row = {"txn_date": float("nan"), "party": float("nan"), "type": "expense", "amount": 100.0,
@@ -214,5 +240,6 @@ if __name__ == "__main__":
     test_friendly_errors_and_retry()
     test_honest_fallback_labels()
     test_api_keys_not_sent_to_browser()
+    test_confirm_ticks_reset_after_use()
     test_nan_cells()
     print("ALL HARDENING TESTS PASSED!")

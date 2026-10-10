@@ -84,6 +84,9 @@ if "voice_transcript" not in st.session_state:
     st.session_state.voice_transcript = ""
 if "scan_errors" not in st.session_state:
     st.session_state.scan_errors = []
+for _confirm_key in ("confirm_demo", "confirm_reset"):
+    if _confirm_key not in st.session_state:
+        st.session_state[_confirm_key] = False
 
 # Demo cache directory
 CACHE_DIR = Path(__file__).parent / "demo_cache"
@@ -349,12 +352,24 @@ with st.sidebar:
     st.divider()
     st.subheader("🧪 Demo Utilities")
 
-    # Load Demo Ledger button (replaces the whole ledger, so ask first)
-    confirm_demo = st.checkbox("Replace current ledger with demo data")
-    if st.button("📥 Load Demo Ledger", type="secondary", disabled=not confirm_demo):
-        count = seed_demo_data()
-        st.toast(f"Demo ledger seeded with {count} realistic transactions!", icon="✅")
-        st.rerun()
+    # Load Demo Ledger button (replaces the whole ledger, so ask first).
+    # The callbacks untick the confirmation so a second click cannot wipe the ledger again.
+    def _load_demo_ledger():
+        st.session_state.sidebar_toast = (f"Demo ledger loaded with {seed_demo_data()} transactions.", "✅")
+        st.session_state.confirm_demo = False
+
+    def _reset_ledger():
+        reset_db()
+        st.session_state.sidebar_toast = ("Ledger reset. All entries were deleted.", "🗑️")
+        st.session_state.confirm_reset = False
+
+    st.checkbox("Replace current ledger with demo data", key="confirm_demo")
+    st.button(
+        "📥 Load Demo Ledger",
+        type="secondary",
+        disabled=not st.session_state.confirm_demo,
+        on_click=_load_demo_ledger,
+    )
 
     # Offline demo mode toggle
     offline_mode = st.toggle("Offline demo mode (use saved results)", value=False)
@@ -363,11 +378,17 @@ with st.sidebar:
 
     # Reset ledger expander
     with st.expander("⚠️ Reset Database"):
-        confirm_reset = st.checkbox("I understand this deletes everything")
-        if st.button("Reset Ledger", type="primary", disabled=not confirm_reset):
-            reset_db()
-            st.toast("Database has been completely cleared.", icon="🗑️")
-            st.rerun()
+        st.checkbox("I understand this deletes everything", key="confirm_reset")
+        st.button(
+            "Reset Ledger",
+            type="primary",
+            disabled=not st.session_state.confirm_reset,
+            on_click=_reset_ledger,
+        )
+
+    if "sidebar_toast" in st.session_state:
+        toast_msg, toast_icon = st.session_state.pop("sidebar_toast")
+        st.toast(toast_msg, icon=toast_icon)
 
 # ==============================================================================
 # TOP APP HEADER BANNER
