@@ -1,0 +1,18 @@
+# Environment variables
+.env
+
+# Database
+hisaab.db
+*.db-journal
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Streamlit config
+.streamlit/secrets.toml
+
+# Virtual environment
+venv/
+.venv/
