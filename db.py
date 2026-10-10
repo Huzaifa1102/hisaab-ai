@@ -6,10 +6,12 @@ SQLite storage for kiryana store ledger transactions and customer khata contacts
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import os
 import sqlite3
 import pandas as pd
 
-DB_FILE = Path(__file__).parent / "hisaab.db"
+# HISAAB_DB_PATH lets test scripts use a throwaway database instead of the real ledger.
+DB_FILE = Path(os.getenv("HISAAB_DB_PATH") or (Path(__file__).parent / "hisaab.db"))
 
 ALLOWED_TYPES = ["expense", "udhaar_given", "payment_received", "cash_sale"]
 

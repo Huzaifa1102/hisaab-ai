@@ -8,6 +8,11 @@ test_voice_and_offline.py — Phase 2 verification:
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 import json
+import os
+import tempfile
+
+# Use a throwaway database so running tests never wipes the real hisaab.db
+os.environ["HISAAB_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test_hisaab.db")
 
 from core import (
     ExtractionResult,

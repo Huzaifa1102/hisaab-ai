@@ -7,6 +7,12 @@ Tests:
 4. Verify no uncaught exceptions on all components.
 """
 
+import os
+import tempfile
+
+# Use a throwaway database so running tests never wipes the real hisaab.db
+os.environ["HISAAB_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test_hisaab.db")
+
 from streamlit.testing.v1 import AppTest
 from db import seed_demo_data, reset_db
 

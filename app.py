@@ -285,8 +285,9 @@ with st.sidebar:
     st.divider()
     st.subheader("🧪 Demo Utilities")
 
-    # Load Demo Ledger button
-    if st.button("📥 Load Demo Ledger", type="secondary"):
+    # Load Demo Ledger button (replaces the whole ledger, so ask first)
+    confirm_demo = st.checkbox("Replace current ledger with demo data")
+    if st.button("📥 Load Demo Ledger", type="secondary", disabled=not confirm_demo):
         count = seed_demo_data()
         st.toast(f"Demo ledger seeded with {count} realistic transactions!", icon="✅")
         st.rerun()
